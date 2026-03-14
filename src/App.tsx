@@ -376,30 +376,55 @@ export default function App() {
   const CameraPreview = ({ camId, className }: { camId: number, className?: string }) => {
     const [src, setSrc] = useState(`/api/cameras/${camId}/snapshot?t=${Date.now()}`);
     const [error, setError] = useState(false);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
       const interval = setInterval(() => {
         setSrc(`/api/cameras/${camId}/snapshot?t=${Date.now()}`);
-      }, 5000);
+      }, 10000); // Increased interval to 10s to give more time for FFmpeg
       return () => clearInterval(interval);
     }, [camId]);
 
-    if (error) {
-      return (
-        <div className={`flex items-center justify-center bg-black/40 text-white/20 text-[10px] ${className}`}>
-          ERRO DE CONEXÃO
-        </div>
-      );
-    }
+    const refresh = () => {
+      setLoading(true);
+      setError(false);
+      setSrc(`/api/cameras/${camId}/snapshot?t=${Date.now()}`);
+    };
 
     return (
-      <img 
-        src={src} 
-        alt="Preview" 
-        className={`object-cover ${className}`}
-        onError={() => setError(true)}
-        onLoad={() => setError(false)}
-      />
+      <div className={`relative bg-black/40 overflow-hidden ${className}`}>
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
+            <Activity className="w-4 h-4 text-emerald-500 animate-pulse" />
+          </div>
+        )}
+        
+        {error ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+            <p className="text-red-400 text-[10px] font-bold uppercase mb-2">Erro de Conexão</p>
+            <button 
+              onClick={refresh}
+              className="text-[8px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded uppercase font-mono"
+            >
+              Tentar Novamente
+            </button>
+          </div>
+        ) : (
+          <img 
+            src={src} 
+            alt="Preview" 
+            className="w-full h-full object-cover"
+            onError={() => {
+              setError(true);
+              setLoading(false);
+            }}
+            onLoad={() => {
+              setError(false);
+              setLoading(false);
+            }}
+          />
+        )}
+      </div>
     );
   };
 

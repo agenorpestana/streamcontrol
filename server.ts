@@ -116,7 +116,8 @@ async function startServer() {
       const cam = db.cameras.find((c: any) => c.id === id);
       if (!cam) return;
       source = cam.rtsp_url;
-      inputArgs = ["-rtsp_transport", "tcp", "-re", "-i", source];
+      // Removed -re for live RTSP streams as it can cause sync issues
+      inputArgs = ["-rtsp_transport", "tcp", "-i", source];
     } else if (type === "video") {
       const vid = db.videos.find((v: any) => v.id === id);
       if (!vid) return;
@@ -219,12 +220,29 @@ async function startServer() {
       "-rtsp_transport", "tcp",
       "-i", cam.rtsp_url,
       "-frames:v", "1",
+      "-an", // Disable audio for faster snapshot
       "-f", "image2",
       "-vcodec", "mjpeg",
       "pipe:1"
     ];
 
     const ffmpeg = spawn("ffmpeg", args);
+    
+    const timeout = setTimeout(() => {
+      ffmpeg.kill("SIGKILL");
+      if (!res.headersSent) res.status(504).end();
+    }, 8000);
+
+    // Log snapshot errors to the main log buffer for debugging
+    ffmpeg.stderr.on("data", (data) => {
+      const log = data.toString();
+      if (log.includes("Error") || log.includes("failed")) {
+        addLog(`[Snapshot Cam ${cam.id}] ${log}`);
+      }
+    });
+
+    ffmpeg.on("close", () => clearTimeout(timeout));
+
     res.setHeader("Content-Type", "image/jpeg");
     ffmpeg.stdout.pipe(res);
     
