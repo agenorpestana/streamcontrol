@@ -317,12 +317,12 @@ export default function App() {
     recorder.ondataavailable = async (event) => {
       if (event.data.size > 0 && socketRef.current) {
         const buffer = await event.data.arrayBuffer();
+        // Send as raw binary
         socketRef.current.emit('web_data', buffer);
       }
     };
 
-    // Use a smaller timeslice for more frequent updates, but ensure FFmpeg handles it
-    recorder.start(500); 
+    recorder.start(1000); // 1s chunks for maximum stability
     mediaRecorderRef.current = recorder;
   };
 

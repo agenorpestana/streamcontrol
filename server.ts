@@ -64,8 +64,8 @@ async function startServer() {
     socket.on("web_data", (data) => {
       if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
         if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
-          // console.log(`Recebido web_data: ${data.byteLength} bytes`);
-          ffmpegProcess.stdin.write(Buffer.from(data));
+          // Use Uint8Array for more reliable binary transmission
+          ffmpegProcess.stdin.write(Buffer.from(new Uint8Array(data)));
         }
       }
     });
@@ -148,20 +148,22 @@ async function startServer() {
       mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; // ? makes audio optional
     } else if (type === "web") {
       // Input 0: Browser Stream (WebM)
+      // Added thread_queue_size to handle network jitter
       inputArgs = [
+        "-thread_queue_size", "1024",
         "-f", "webm", 
-        "-fflags", "+genpts",
-        "-i", "pipe:0"
+        "-i", "pipe:0",
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
       ];
-      // Map video and audio from the browser stream
-      mappingArgs = ["-map", "0:v:0", "-map", "0:a:0"];
+      // Map video from browser and audio from silence (most stable for YouTube)
+      mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
     }
 
     const youtubeKey = db.stream_status.youtube_key;
     if (!youtubeKey) return;
 
-    // Using RTMPS for better stability and compatibility
-    const rtmpUrl = `rtmps://a.rtmps.youtube.com/live2/${youtubeKey}`;
+    // Switching back to RTMP for lower overhead with live browser streams
+    const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
 
     // FFmpeg Command: Inputs first, then Encoding, then Mapping, then Output
     // Optimized for YouTube: Constant GOP (2s), High Profile, CBR-like bitrate
