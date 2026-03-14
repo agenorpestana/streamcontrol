@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Types
@@ -8,6 +8,13 @@ interface CameraData {
   name: string;
   rtsp_url: string;
   is_active: boolean;
+}
+
+interface VideoData {
+  id: number;
+  title: string;
+  file_path: string;
+  created_at: string;
 }
 
 interface StreamStatus {
@@ -22,10 +29,13 @@ export default function App() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [cameras, setCameras] = useState<CameraData[]>([]);
+  const [videos, setVideos] = useState<VideoData[]>([]);
   const [status, setStatus] = useState<StreamStatus | null>(null);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'cameras' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'cameras' | 'videos' | 'settings'>('dashboard');
   const [newCam, setNewCam] = useState({ name: '', rtsp_url: '' });
   const [ytKey, setYtKey] = useState('');
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (isLoggedIn) {
@@ -38,12 +48,14 @@ export default function App() {
     const headers = { Authorization: `Bearer ${token}` };
 
     try {
-      const [camsRes, statusRes] = await Promise.all([
+      const [camsRes, vidsRes, statusRes] = await Promise.all([
         fetch('/api/cameras', { headers }),
+        fetch('/api/videos', { headers }),
         fetch('/api/status', { headers })
       ]);
       
       if (camsRes.ok) setCameras(await camsRes.json());
+      if (vidsRes.ok) setVideos(await vidsRes.json());
       if (statusRes.ok) {
         const s = await statusRes.json();
         setStatus(s);
@@ -67,10 +79,10 @@ export default function App() {
         localStorage.setItem('token', data.token);
         setIsLoggedIn(true);
       } else {
-        alert('Login failed');
+        alert('Falha no login');
       }
     } catch (e) {
-      alert('Error connecting to server');
+      alert('Erro ao conectar com o servidor');
     }
   };
 
@@ -124,6 +136,50 @@ export default function App() {
     fetchData();
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    console.log("Arquivo selecionado:", file?.name);
+    if (!file) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('video', file);
+
+    const token = localStorage.getItem('token');
+    console.log("Iniciando upload para /api/videos...");
+    try {
+      const res = await fetch('/api/videos', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      console.log("Resposta do servidor:", res.status);
+      if (res.ok) {
+        console.log("Upload concluído com sucesso!");
+        fetchData();
+      } else {
+        const errorData = await res.json().catch(() => ({}));
+        console.error("Erro no upload:", errorData);
+        alert('Erro ao enviar vídeo: ' + (errorData.error || res.statusText));
+      }
+    } catch (e) {
+      console.error('Erro na conexão durante upload:', e);
+      alert('Erro na conexão ao enviar vídeo');
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const deleteVideo = async (id: number) => {
+    const token = localStorage.getItem('token');
+    await fetch(`/api/videos/${id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    fetchData();
+  };
+
   const saveYtKey = async () => {
     const token = localStorage.getItem('token');
     await fetch('/api/status/key', {
@@ -134,7 +190,7 @@ export default function App() {
       },
       body: JSON.stringify({ key: ytKey })
     });
-    alert('YouTube Key Saved');
+    alert('Chave do YouTube Salva');
   };
 
   if (!isLoggedIn) {
@@ -150,12 +206,12 @@ export default function App() {
               <Activity className="text-white w-8 h-8" />
             </div>
             <h1 className="text-3xl font-bold tracking-tight">StreamControl</h1>
-            <p className="text-white/50 text-sm mt-2 font-mono uppercase tracking-widest">Broadcast Management System</p>
+            <p className="text-white/50 text-sm mt-2 font-mono uppercase tracking-widest">Sistema de Gerenciamento de Transmissão</p>
           </div>
           
           <form onSubmit={handleLogin} className="space-y-6">
             <div>
-              <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Username</label>
+              <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Usuário</label>
               <input 
                 type="text" 
                 value={username}
@@ -165,7 +221,7 @@ export default function App() {
               />
             </div>
             <div>
-              <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Password</label>
+              <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Senha</label>
               <input 
                 type="password" 
                 value={password}
@@ -178,7 +234,7 @@ export default function App() {
               type="submit"
               className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-emerald-500/20 active:scale-[0.98]"
             >
-              Access Dashboard
+              Acessar Painel
             </button>
           </form>
         </motion.div>
@@ -201,21 +257,28 @@ export default function App() {
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'dashboard' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-white/60 hover:bg-white/5'}`}
           >
             <Monitor size={20} />
-            <span className="font-medium">Dashboard</span>
+            <span className="font-medium">Painel</span>
           </button>
           <button 
             onClick={() => setActiveTab('cameras')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'cameras' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-white/60 hover:bg-white/5'}`}
           >
             <Camera size={20} />
-            <span className="font-medium">Cameras</span>
+            <span className="font-medium">Câmeras</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('videos')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'videos' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-white/60 hover:bg-white/5'}`}
+          >
+            <Video size={20} />
+            <span className="font-medium">Vídeos</span>
           </button>
           <button 
             onClick={() => setActiveTab('settings')}
             className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'settings' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-white/60 hover:bg-white/5'}`}
           >
             <Settings size={20} />
-            <span className="font-medium">Settings</span>
+            <span className="font-medium">Configurações</span>
           </button>
         </nav>
 
@@ -225,7 +288,7 @@ export default function App() {
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-red-400 hover:bg-red-400/10 transition-all"
           >
             <LogOut size={20} />
-            <span className="font-medium">Logout</span>
+            <span className="font-medium">Sair</span>
           </button>
         </div>
       </aside>
@@ -234,21 +297,21 @@ export default function App() {
       <main className="flex-1 overflow-y-auto p-6 lg:p-10">
         <header className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h2 className="text-3xl font-bold capitalize">{activeTab}</h2>
-            <p className="text-white/40 mt-1">Manage your live broadcast infrastructure</p>
+            <h2 className="text-3xl font-bold capitalize">{activeTab === 'dashboard' ? 'Painel de Controle' : activeTab === 'cameras' ? 'Câmeras' : activeTab === 'videos' ? 'Vídeos Comerciais' : 'Configurações'}</h2>
+            <p className="text-white/40 mt-1">Gerencie sua infraestrutura de transmissão ao vivo</p>
           </div>
           
           <div className="flex items-center gap-4 bg-[#151619] p-2 rounded-2xl border border-white/10">
             <div className={`w-3 h-3 rounded-full ${status?.is_streaming ? 'bg-red-500 animate-pulse' : 'bg-white/20'}`} />
             <span className="text-sm font-mono uppercase tracking-wider">
-              {status?.is_streaming ? 'Live Streaming' : 'Standby'}
+              {status?.is_streaming ? 'Ao Vivo' : 'Em Espera'}
             </span>
             {status?.is_streaming && (
               <button 
                 onClick={stopStream}
                 className="bg-red-500/20 hover:bg-red-500/30 text-red-400 px-4 py-1.5 rounded-lg text-xs font-bold transition-all"
               >
-                STOP
+                PARAR
               </button>
             )}
           </div>
@@ -267,22 +330,22 @@ export default function App() {
               <div className="xl:col-span-2 space-y-6">
                 <div className="bg-[#151619] rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
                   <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/20">
-                    <span className="text-xs font-mono uppercase tracking-widest text-white/40">Program Output</span>
+                    <span className="text-xs font-mono uppercase tracking-widest text-white/40">Saída do Programa</span>
                     {status?.is_streaming && (
-                      <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter">On Air</span>
+                      <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter">No Ar</span>
                     )}
                   </div>
                   <div className="aspect-video bg-black flex items-center justify-center relative">
                     {status?.is_streaming ? (
                       <div className="text-center">
                         <Activity className="w-12 h-12 text-emerald-500 mx-auto mb-4 animate-pulse" />
-                        <p className="font-mono text-sm text-white/60">Streaming Source: {status.current_source_type} #{status.current_source_id}</p>
+                        <p className="font-mono text-sm text-white/60">Fonte Atual: {status.current_source_type === 'camera' ? 'Câmera' : 'Vídeo'} #{status.current_source_id}</p>
                       </div>
                     ) : (
                       <div className="text-center p-10">
                         <Monitor className="w-16 h-16 text-white/10 mx-auto mb-4" />
-                        <p className="text-white/30 font-medium">No active broadcast</p>
-                        <p className="text-white/10 text-xs mt-2">Select a camera below to start</p>
+                        <p className="text-white/30 font-medium">Nenhuma transmissão ativa</p>
+                        <p className="text-white/10 text-xs mt-2">Selecione uma câmera ou vídeo abaixo para iniciar</p>
                       </div>
                     )}
                   </div>
@@ -290,7 +353,7 @@ export default function App() {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {cameras.map(cam => (
-                    <div key={cam.id} className={`bg-[#151619] rounded-2xl border transition-all overflow-hidden group ${status?.current_source_id === cam.id ? 'border-emerald-500 shadow-lg shadow-emerald-500/10' : 'border-white/10 hover:border-white/20'}`}>
+                    <div key={cam.id} className={`bg-[#151619] rounded-2xl border transition-all overflow-hidden group ${status?.current_source_id === cam.id && status.current_source_type === 'camera' ? 'border-emerald-500 shadow-lg shadow-emerald-500/10' : 'border-white/10 hover:border-white/20'}`}>
                       <div className="aspect-video bg-black/40 relative">
                         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/60">
                           <button 
@@ -309,10 +372,10 @@ export default function App() {
                           <h4 className="font-bold">{cam.name}</h4>
                           <p className="text-xs text-white/40 font-mono truncate max-w-[150px]">{cam.rtsp_url}</p>
                         </div>
-                        {status?.current_source_id === cam.id && (
+                        {status?.current_source_id === cam.id && status.current_source_type === 'camera' && (
                           <div className="flex items-center gap-2 text-emerald-500">
                             <Activity size={16} className="animate-pulse" />
-                            <span className="text-[10px] font-bold uppercase tracking-widest">Active</span>
+                            <span className="text-[10px] font-bold uppercase tracking-widest">Ativo</span>
                           </div>
                         )}
                       </div>
@@ -326,21 +389,21 @@ export default function App() {
                 <div className="bg-[#151619] rounded-3xl border border-white/10 p-6">
                   <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                     <Activity size={18} className="text-emerald-500" />
-                    System Status
+                    Status do Sistema
                   </h3>
                   <div className="space-y-4">
                     <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
-                      <span className="text-sm text-white/40">CPU Usage</span>
+                      <span className="text-sm text-white/40">Uso de CPU</span>
                       <span className="text-sm font-mono">12%</span>
                     </div>
                     <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
-                      <span className="text-sm text-white/40">Memory</span>
+                      <span className="text-sm text-white/40">Memória</span>
                       <span className="text-sm font-mono">450MB</span>
                     </div>
                     <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
                       <span className="text-sm text-white/40">FFmpeg</span>
                       <span className={`text-sm font-mono ${status?.is_streaming ? 'text-emerald-500' : 'text-white/20'}`}>
-                        {status?.is_streaming ? 'RUNNING' : 'IDLE'}
+                        {status?.is_streaming ? 'EXECUTANDO' : 'OCIOSO'}
                       </span>
                     </div>
                   </div>
@@ -349,11 +412,34 @@ export default function App() {
                 <div className="bg-[#151619] rounded-3xl border border-white/10 p-6">
                   <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
                     <Video size={18} className="text-emerald-500" />
-                    Commercials
+                    Comerciais Rápidos
                   </h3>
-                  <div className="text-center py-10 border-2 border-dashed border-white/5 rounded-2xl">
-                    <p className="text-white/20 text-sm">No videos uploaded</p>
-                    <button className="mt-4 text-xs font-bold text-emerald-500 hover:underline">Upload Video</button>
+                  <div className="space-y-3">
+                    {videos.length === 0 ? (
+                      <div className="text-center py-6 border-2 border-dashed border-white/5 rounded-2xl">
+                        <p className="text-white/20 text-xs">Nenhum vídeo</p>
+                      </div>
+                    ) : (
+                      videos.slice(0, 3).map(vid => (
+                        <button 
+                          key={vid.id}
+                          onClick={() => switchStream('video', vid.id)}
+                          className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${status?.current_source_id === vid.id && status.current_source_type === 'video' ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500' : 'bg-black/20 border-white/5 text-white/60 hover:border-white/20'}`}
+                        >
+                          <div className="flex items-center gap-3 overflow-hidden">
+                            <Video size={16} />
+                            <span className="text-xs font-medium truncate">{vid.title}</span>
+                          </div>
+                          <Play size={12} fill="currentColor" />
+                        </button>
+                      ))
+                    )}
+                    <button 
+                      onClick={() => setActiveTab('videos')}
+                      className="w-full text-center text-[10px] font-bold text-emerald-500 hover:underline mt-2 uppercase tracking-widest"
+                    >
+                      Ver Todos os Vídeos
+                    </button>
                   </div>
                 </div>
               </div>
@@ -369,26 +455,26 @@ export default function App() {
               className="max-w-4xl"
             >
               <div className="bg-[#151619] rounded-3xl border border-white/10 p-8 mb-8">
-                <h3 className="text-xl font-bold mb-6">Add New Camera</h3>
+                <h3 className="text-xl font-bold mb-6">Adicionar Nova Câmera</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Camera Name</label>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Nome da Câmera</label>
                     <input 
                       type="text" 
                       value={newCam.name}
                       onChange={(e) => setNewCam({ ...newCam, name: e.target.value })}
                       className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
-                      placeholder="Main Entrance"
+                      placeholder="Entrada Principal"
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">RTSP URL</label>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">URL RTSP</label>
                     <input 
                       type="text" 
                       value={newCam.rtsp_url}
                       onChange={(e) => setNewCam({ ...newCam, rtsp_url: e.target.value })}
                       className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
-                      placeholder="rtsp://user:pass@ip:port/stream"
+                      placeholder="rtsp://usuario:senha@ip:porta/stream"
                     />
                   </div>
                 </div>
@@ -397,7 +483,7 @@ export default function App() {
                   className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-8 py-3 rounded-xl transition-all flex items-center gap-2"
                 >
                   <Plus size={20} />
-                  Add Camera
+                  Adicionar Câmera
                 </button>
               </div>
 
@@ -425,6 +511,74 @@ export default function App() {
             </motion.div>
           )}
 
+          {activeTab === 'videos' && (
+            <motion.div 
+              key="videos"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="max-w-4xl"
+            >
+              <div className="bg-[#151619] rounded-3xl border border-white/10 p-8 mb-8">
+                <div className="flex items-center justify-between mb-6">
+                  <h3 className="text-xl font-bold">Vídeos Comerciais</h3>
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                    className="bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-500/50 text-white font-bold px-6 py-2.5 rounded-xl transition-all flex items-center gap-2"
+                  >
+                    {isUploading ? <Activity className="animate-pulse" size={18} /> : <Upload size={18} />}
+                    {isUploading ? 'Enviando...' : 'Upload de Vídeo'}
+                  </button>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    onChange={handleFileUpload} 
+                    accept="video/*" 
+                    className="hidden" 
+                  />
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {videos.length === 0 ? (
+                    <div className="col-span-full text-center py-20 border-2 border-dashed border-white/5 rounded-3xl">
+                      <Video className="w-12 h-12 text-white/10 mx-auto mb-4" />
+                      <p className="text-white/30">Nenhum vídeo comercial disponível</p>
+                    </div>
+                  ) : (
+                    videos.map(vid => (
+                      <div key={vid.id} className="bg-black/20 rounded-2xl border border-white/5 p-4 flex items-center justify-between group hover:border-white/10 transition-all">
+                        <div className="flex items-center gap-4 overflow-hidden">
+                          <div className="w-10 h-10 bg-emerald-500/10 rounded-lg flex items-center justify-center text-emerald-500">
+                            <Video size={20} />
+                          </div>
+                          <div className="overflow-hidden">
+                            <h4 className="font-bold text-sm truncate">{vid.title}</h4>
+                            <p className="text-[10px] text-white/30 font-mono">{new Date(vid.created_at).toLocaleDateString()}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button 
+                            onClick={() => switchStream('video', vid.id)}
+                            className={`p-2 rounded-lg transition-all ${status?.current_source_id === vid.id && status.current_source_type === 'video' ? 'bg-emerald-500 text-white' : 'text-white/20 hover:text-emerald-500 hover:bg-emerald-500/10'}`}
+                          >
+                            <Play size={16} fill="currentColor" />
+                          </button>
+                          <button 
+                            onClick={() => deleteVideo(vid.id)}
+                            className="p-2 text-white/10 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all opacity-0 group-hover:opacity-100"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
           {activeTab === 'settings' && (
             <motion.div 
               key="settings"
@@ -434,10 +588,10 @@ export default function App() {
               className="max-w-2xl"
             >
               <div className="bg-[#151619] rounded-3xl border border-white/10 p-8">
-                <h3 className="text-xl font-bold mb-6">Broadcast Settings</h3>
+                <h3 className="text-xl font-bold mb-6">Configurações de Transmissão</h3>
                 <div className="space-y-6">
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">YouTube Stream Key</label>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Chave de Transmissão do YouTube</label>
                     <div className="flex gap-4">
                       <input 
                         type="password" 
@@ -450,17 +604,17 @@ export default function App() {
                         onClick={saveYtKey}
                         className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-6 py-3 rounded-xl transition-all"
                       >
-                        Save
+                        Salvar
                       </button>
                     </div>
-                    <p className="text-[10px] text-white/20 mt-2 font-mono">Found in your YouTube Studio dashboard</p>
+                    <p className="text-[10px] text-white/20 mt-2 font-mono">Encontrada no painel do YouTube Studio</p>
                   </div>
 
                   <div className="pt-6 border-t border-white/10">
-                    <h4 className="font-bold mb-4">Output Configuration</h4>
+                    <h4 className="font-bold mb-4">Configuração de Saída</h4>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="p-4 bg-black/20 rounded-xl border border-white/5">
-                        <span className="block text-[10px] font-mono text-white/40 uppercase mb-1">Resolution</span>
+                        <span className="block text-[10px] font-mono text-white/40 uppercase mb-1">Resolução</span>
                         <span className="font-bold">1080p (1920x1080)</span>
                       </div>
                       <div className="p-4 bg-black/20 rounded-xl border border-white/5">

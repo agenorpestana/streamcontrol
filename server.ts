@@ -8,6 +8,7 @@ import { spawn, ChildProcess } from "child_process";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
+import multer from "multer";
 
 // Mock Database for Preview (In production, use MySQL)
 const DB_FILE = path.join(process.cwd(), "data.json");
@@ -19,8 +20,8 @@ const initDb = () => {
         { id: 2, username: "suporte@unityautomacoes.com.br", password: bcrypt.hashSync("200616", 10), role: "admin" }
       ],
       cameras: [
-        { id: 1, name: "Camera 01", rtsp_url: "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mp4", is_active: true },
-        { id: 2, name: "Camera 02", rtsp_url: "rtsp://demo:demo@static.cartesian.io:554/live/ch0", is_active: true }
+        { id: 1, name: "Câmera 01", rtsp_url: "rtsp://wowzaec2demo.streamlock.net/vod/mp4:BigBuckBunny_115k.mp4", is_active: true },
+        { id: 2, name: "Câmera 02", rtsp_url: "rtsp://demo:demo@static.cartesian.io:554/live/ch0", is_active: true }
       ],
       videos: [],
       stream_status: { current_source_type: "none", current_source_id: null, is_streaming: false, youtube_key: "" }
@@ -38,6 +39,17 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+// Multer Configuration
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
+  filename: (req, file, cb) => {
+    cb(null, `${Date.now()}-${file.originalname}`);
+  }
+});
+const upload = multer({ storage });
+
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
@@ -45,12 +57,12 @@ async function startServer() {
     cors: { origin: "*" }
   });
 
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const JWT_SECRET = process.env.JWT_SECRET || "stream-control-secret-123";
 
   app.use(cors());
   app.use(express.json());
-  app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+  app.use("/uploads", express.static(uploadsDir));
 
   // FFmpeg Management
   let ffmpegProcess: ChildProcess | null = null;
@@ -80,7 +92,7 @@ async function startServer() {
     } else {
       const vid = db.videos.find((v: any) => v.id === id);
       if (!vid) return;
-      source = vid.file_path;
+      source = path.join(process.cwd(), vid.file_path);
     }
 
     const youtubeKey = db.stream_status.youtube_key;
@@ -89,7 +101,6 @@ async function startServer() {
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
 
     // FFmpeg Command
-    // Note: In a real VPS, this would send to Nginx RTMP first or directly to YT
     const args = [
       "-re",
       "-i", source,
@@ -106,15 +117,11 @@ async function startServer() {
       rtmpUrl
     ];
 
-    console.log("Starting FFmpeg with source:", source);
+    console.log("Iniciando FFmpeg com fonte:", source);
     ffmpegProcess = spawn("ffmpeg", args);
 
-    ffmpegProcess.stderr?.on("data", (data) => {
-      // console.log(`FFmpeg: ${data}`);
-    });
-
     ffmpegProcess.on("close", (code) => {
-      console.log(`FFmpeg process exited with code ${code}`);
+      console.log(`Processo FFmpeg encerrado com código ${code}`);
       stopStream();
     });
 
@@ -128,13 +135,13 @@ async function startServer() {
   // Auth Middleware
   const authenticate = (req: any, res: any, next: any) => {
     const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Unauthorized" });
+    if (!token) return res.status(401).json({ error: "Não autorizado" });
     try {
       const decoded = jwt.verify(token, JWT_SECRET);
       req.user = decoded;
       next();
     } catch (e) {
-      res.status(401).json({ error: "Invalid token" });
+      res.status(401).json({ error: "Token inválido" });
     }
   };
 
@@ -144,7 +151,7 @@ async function startServer() {
     const db = getDb();
     const user = db.users.find((u: any) => u.username === username);
     if (!user || !bcrypt.compareSync(password, user.password)) {
-      return res.status(401).json({ error: "Invalid credentials" });
+      return res.status(401).json({ error: "Credenciais inválidas" });
     }
     const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET);
     res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
@@ -166,6 +173,43 @@ async function startServer() {
     const db = getDb();
     db.cameras = db.cameras.filter((c: any) => c.id !== parseInt(req.params.id));
     saveDb(db);
+    res.json({ success: true });
+  });
+
+  app.get("/api/videos", authenticate, (req, res) => {
+    res.json(getDb().videos);
+  });
+
+  app.post("/api/videos", authenticate, upload.single("video"), (req, res) => {
+    console.log("Recebendo requisição de upload de vídeo...");
+    if (!req.file) {
+      console.log("Nenhum arquivo recebido na requisição.");
+      return res.status(400).json({ error: "Nenhum arquivo enviado" });
+    }
+    console.log("Arquivo recebido:", req.file.originalname, "Salvo em:", req.file.path);
+    
+    const db = getDb();
+    const newVideo = {
+      id: Date.now(),
+      title: req.file.originalname,
+      file_path: `uploads/${req.file.filename}`,
+      created_at: new Date()
+    };
+    db.videos.push(newVideo);
+    saveDb(db);
+    console.log("Vídeo salvo no banco de dados:", newVideo.id);
+    res.json(newVideo);
+  });
+
+  app.delete("/api/videos/:id", authenticate, (req, res) => {
+    const db = getDb();
+    const video = db.videos.find((v: any) => v.id === parseInt(req.params.id));
+    if (video) {
+      const fullPath = path.join(process.cwd(), video.file_path);
+      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+      db.videos = db.videos.filter((v: any) => v.id !== video.id);
+      saveDb(db);
+    }
     res.json({ success: true });
   });
 
@@ -206,8 +250,17 @@ async function startServer() {
     });
   }
 
+  // Global Error Handler
+  app.use((err: any, req: any, res: any, next: any) => {
+    console.error("Erro não tratado no servidor:", err);
+    if (res.headersSent) {
+      return next(err);
+    }
+    res.status(500).json({ error: "Erro interno no servidor", details: err.message });
+  });
+
   httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Servidor rodando em http://localhost:${PORT}`);
   });
 }
 
