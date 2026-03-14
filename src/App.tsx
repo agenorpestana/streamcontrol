@@ -72,7 +72,12 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), log]);
       });
 
+      socket.on('ffmpeg_log_clear', () => {
+        setFfmpegLogs([]);
+      });
+
       socket.on('server_ready_for_web', () => {
+        setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Recebido sinal de prontidão do servidor. Iniciando gravação...\n"]);
         startActualRecorder();
       });
 
@@ -201,20 +206,30 @@ export default function App() {
 
   const switchStream = async (type: 'camera' | 'video' | 'web', id: number | string) => {
     const token = localStorage.getItem('token');
+    setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Solicitando troca de stream para: ${type} (${id})...\n`]);
     
     // Optimistic update to show immediate response
     if (status) {
       setStatus({ ...status, is_streaming: true, current_source_type: type, current_source_id: id });
     }
 
-    await fetch('/api/stream/switch', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}` 
-      },
-      body: JSON.stringify({ type, id })
-    });
+    try {
+      const response = await fetch('/api/stream/switch', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ type, id })
+      });
+      if (!response.ok) {
+        throw new Error(`Erro na API: ${response.statusText}`);
+      }
+      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] API respondeu com sucesso.\n`]);
+    } catch (error: any) {
+      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NA TROCA DE STREAM: ${error.message}\n`]);
+      // Revert optimistic update if possible or just let fetchData handle it
+    }
     fetchData();
   };
 
@@ -1149,6 +1164,26 @@ export default function App() {
                         {isLocalStreaming ? <Square size={20} /> : <Play size={20} />}
                         {isLocalStreaming ? 'PARAR TRANSMISSÃO' : 'TRANSMITIR AGORA'}
                       </button>
+                      
+                      <button 
+                        onClick={() => setShowLogs(!showLogs)}
+                        className="w-full py-2 text-[10px] font-bold text-emerald-500 hover:bg-emerald-500/10 rounded-xl uppercase tracking-widest transition-all"
+                      >
+                        {showLogs ? 'Ocultar Logs de Transmissão' : 'Ver Logs de Transmissão'}
+                      </button>
+
+                      {showLogs && (
+                        <div className="bg-black/40 rounded-xl p-3 font-mono text-[10px] h-48 overflow-y-auto space-y-1 border border-white/5">
+                          {ffmpegLogs.length === 0 ? (
+                            <p className="text-white/20">Aguardando logs...</p>
+                          ) : (
+                            ffmpegLogs.map((log, i) => (
+                              <p key={i} className="text-white/60 break-all">{log}</p>
+                            ))
+                          )}
+                        </div>
+                      )}
+
                       <p className="text-[10px] text-center text-white/20 uppercase tracking-widest">
                         A transmissão será enviada diretamente para o YouTube
                       </p>

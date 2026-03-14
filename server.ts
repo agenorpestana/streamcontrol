@@ -60,12 +60,18 @@ async function startServer() {
   io.on("connection", (socket) => {
     console.log("Cliente conectado:", socket.id);
     socket.emit("stream_status", getDb().stream_status);
+    
+    // Enviar logs existentes para o novo cliente
+    ffmpegLogs.forEach(log => socket.emit("ffmpeg_log", log));
 
     socket.on("web_data", (data) => {
       if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
         if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
-          // Use Uint8Array for more reliable binary transmission
-          ffmpegProcess.stdin.write(Buffer.from(new Uint8Array(data)));
+          try {
+            ffmpegProcess.stdin.write(Buffer.from(new Uint8Array(data)));
+          } catch (e) {
+            console.error("Erro ao escrever no stdin do FFmpeg:", e);
+          }
         }
       }
     });
@@ -114,8 +120,23 @@ async function startServer() {
   };
 
   const startStream = (type: "camera" | "video" | "web", id: number | string) => {
+    const msg = `[SERVER] startStream chamado: type=${type}, id=${id}`;
+    console.log(msg);
+    
     stopStream(true);
+    
+    // Limpar logs antigos no servidor e avisar clientes
+    ffmpegLogs = [];
+    io.emit("ffmpeg_log_clear");
+    addLog(`${msg}\n`);
+
     const db = getDb();
+    const youtubeKey = db.stream_status.youtube_key;
+    if (!youtubeKey) {
+      addLog("ERRO: Chave do YouTube não configurada nas configurações.\n");
+      return;
+    }
+
     let inputArgs: string[] = [];
     let mappingArgs: string[] = [];
     
@@ -146,19 +167,15 @@ async function startServer() {
       mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; // ? makes audio optional
     } else if (type === "web") {
       // Input 0: Browser Stream (WebM)
-      // Using -fflags +genpts and -re (read at native rate) for pipe stability
+      // Simplificado ao máximo para teste
       inputArgs = [
-        "-fflags", "+genpts",
         "-f", "webm", 
         "-i", "pipe:0",
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
       ];
-      // Map video from browser and audio from silence (most stable for YouTube)
+      // Map video from browser and audio from silence
       mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
     }
-
-    const youtubeKey = db.stream_status.youtube_key;
-    if (!youtubeKey) return;
 
     // RTMP is generally more compatible for direct pipe streaming
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
@@ -191,28 +208,34 @@ async function startServer() {
     ];
 
     console.log("Iniciando FFmpeg:", args.join(" "));
-    io.emit("ffmpeg_log", `Comando: ffmpeg ${args.join(" ")}\n`);
+    addLog(`Comando: ffmpeg ${args.join(" ")}\n`);
 
     try {
       ffmpegProcess = spawn("ffmpeg", args);
+      console.log("Processo FFmpeg iniciado com PID:", ffmpegProcess.pid);
     } catch (e: any) {
-      io.emit("ffmpeg_log", `ERRO AO INICIAR FFMPEG: ${e.message}\n`);
+      console.error("Erro ao iniciar FFmpeg:", e);
+      addLog(`ERRO AO INICIAR FFMPEG: ${e.message}\n`);
       return;
     }
 
     ffmpegProcess.on("error", (err) => {
-      io.emit("ffmpeg_log", `ERRO NO PROCESSO FFMPEG: ${err.message}\n`);
+      console.error("Erro no processo FFmpeg:", err);
+      addLog(`ERRO NO PROCESSO FFMPEG: ${err.message}\n`);
     });
 
     if (type === "web") {
+      console.log("Aguardando 1s para sinalizar prontidão do pipe...");
       // Give FFmpeg a moment to initialize the pipe before telling the client to send data
       setTimeout(() => {
+        console.log("Sinalizando server_ready_for_web");
         io.emit("server_ready_for_web");
       }, 1000);
     }
 
     ffmpegProcess.on("close", (code) => {
       console.log(`Processo FFmpeg encerrado com código ${code}`);
+      addLog(`FFmpeg encerrado com código ${code}\n`);
       if (ffmpegProcess) {
         stopStream();
       }
