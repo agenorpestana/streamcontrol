@@ -81,6 +81,13 @@ async function startServer() {
 
   // FFmpeg Management
   let ffmpegProcess: ChildProcess | null = null;
+  let ffmpegLogs: string[] = [];
+
+  const addLog = (data: string) => {
+    ffmpegLogs.push(data);
+    if (ffmpegLogs.length > 100) ffmpegLogs.shift();
+    io.emit("ffmpeg_log", data);
+  };
 
   const stopStream = (isSwitching = false) => {
     if (ffmpegProcess) {
@@ -88,6 +95,7 @@ async function startServer() {
       ffmpegProcess.kill("SIGKILL");
       ffmpegProcess = null;
     }
+    ffmpegLogs = [];
     if (!isSwitching) {
       const db = getDb();
       db.stream_status.is_streaming = false;
@@ -108,7 +116,7 @@ async function startServer() {
       const cam = db.cameras.find((c: any) => c.id === id);
       if (!cam) return;
       source = cam.rtsp_url;
-      inputArgs = ["-re", "-i", source];
+      inputArgs = ["-rtsp_transport", "tcp", "-re", "-i", source];
     } else if (type === "video") {
       const vid = db.videos.find((v: any) => v.id === id);
       if (!vid) return;
@@ -161,7 +169,9 @@ async function startServer() {
     });
 
     ffmpegProcess.stderr?.on("data", (data) => {
-      // console.log(`FFmpeg: ${data}`);
+      const log = data.toString();
+      addLog(log);
+      // console.log(`FFmpeg: ${log}`);
     });
 
     db.stream_status.is_streaming = true;
@@ -198,6 +208,37 @@ async function startServer() {
 
   app.get("/api/cameras", authenticate, (req, res) => {
     res.json(getDb().cameras);
+  });
+
+  app.get("/api/cameras/:id/snapshot", authenticate, (req, res) => {
+    const db = getDb();
+    const cam = db.cameras.find((c: any) => c.id === parseInt(req.params.id));
+    if (!cam) return res.status(404).json({ error: "Câmera não encontrada" });
+
+    const args = [
+      "-rtsp_transport", "tcp",
+      "-i", cam.rtsp_url,
+      "-frames:v", "1",
+      "-f", "image2",
+      "-vcodec", "mjpeg",
+      "pipe:1"
+    ];
+
+    const ffmpeg = spawn("ffmpeg", args);
+    res.setHeader("Content-Type", "image/jpeg");
+    ffmpeg.stdout.pipe(res);
+    
+    // Timeout to prevent hanging
+    const timeout = setTimeout(() => {
+      ffmpeg.kill("SIGKILL");
+      if (!res.headersSent) res.status(504).end();
+    }, 5000);
+
+    ffmpeg.on("close", () => clearTimeout(timeout));
+    ffmpeg.on("error", () => {
+      clearTimeout(timeout);
+      if (!res.headersSent) res.status(500).end();
+    });
   });
 
   app.post("/api/cameras", authenticate, (req, res) => {
@@ -254,6 +295,10 @@ async function startServer() {
 
   app.get("/api/status", authenticate, (req, res) => {
     res.json(getDb().stream_status);
+  });
+
+  app.get("/api/status/logs", authenticate, (req, res) => {
+    res.json({ logs: ffmpegLogs });
   });
 
   app.post("/api/status/key", authenticate, (req, res) => {

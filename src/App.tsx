@@ -37,6 +37,8 @@ export default function App() {
   const [newCam, setNewCam] = useState({ name: '', rtsp_url: '' });
   const [ytKey, setYtKey] = useState('');
   const [isUploading, setIsUploading] = useState(false);
+  const [ffmpegLogs, setFfmpegLogs] = useState<string[]>([]);
+  const [showLogs, setShowLogs] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<any>(null);
 
@@ -64,6 +66,10 @@ export default function App() {
         if (!newStatus.is_streaming && isLocalStreaming) {
           stopWebBroadcast();
         }
+      });
+
+      socket.on('ffmpeg_log', (log: string) => {
+        setFfmpegLogs(prev => [...prev.slice(-49), log]);
       });
 
       return () => {
@@ -367,6 +373,36 @@ export default function App() {
     alert('Chave do YouTube Salva');
   };
 
+  const CameraPreview = ({ camId, className }: { camId: number, className?: string }) => {
+    const [src, setSrc] = useState(`/api/cameras/${camId}/snapshot?t=${Date.now()}`);
+    const [error, setError] = useState(false);
+
+    useEffect(() => {
+      const interval = setInterval(() => {
+        setSrc(`/api/cameras/${camId}/snapshot?t=${Date.now()}`);
+      }, 5000);
+      return () => clearInterval(interval);
+    }, [camId]);
+
+    if (error) {
+      return (
+        <div className={`flex items-center justify-center bg-black/40 text-white/20 text-[10px] ${className}`}>
+          ERRO DE CONEXÃO
+        </div>
+      );
+    }
+
+    return (
+      <img 
+        src={src} 
+        alt="Preview" 
+        className={`object-cover ${className}`}
+        onError={() => setError(true)}
+        onLoad={() => setError(false)}
+      />
+    );
+  };
+
   const toggleLoop = async () => {
     const token = localStorage.getItem('token');
     const newLoop = !status?.loop_video;
@@ -604,6 +640,17 @@ export default function App() {
                             </div>
                             <p className="font-mono text-[10px] text-white/40 mt-2 uppercase tracking-widest">Transmissão Local Ativa</p>
                           </div>
+                        ) : status.current_source_type === 'camera' ? (
+                          <div className="w-full h-full relative">
+                            <CameraPreview camId={status.current_source_id as number} className="w-full h-full object-contain" />
+                            <div className="absolute inset-0 bg-black/20 pointer-events-none" />
+                            <div className="absolute bottom-4 left-4 flex items-center gap-2">
+                              <Activity className="w-4 h-4 text-emerald-500 animate-pulse" />
+                              <span className="text-[10px] font-mono text-white/60 uppercase tracking-widest">
+                                Streaming: Câmera #{status.current_source_id}
+                              </span>
+                            </div>
+                          </div>
                         ) : (
                           <div className="flex flex-col items-center justify-center h-full">
                             <Activity className="w-12 h-12 text-emerald-500 mx-auto mb-4 animate-pulse" />
@@ -641,6 +688,7 @@ export default function App() {
                   {cameras.map(cam => (
                     <div key={cam.id} className={`bg-[#151619] rounded-2xl border transition-all overflow-hidden group ${status?.current_source_id === cam.id && status.current_source_type === 'camera' ? 'border-emerald-500 shadow-lg shadow-emerald-500/10' : 'border-white/10 hover:border-white/20'}`}>
                       <div className="aspect-video bg-black/40 relative">
+                        <CameraPreview camId={cam.id} className="w-full h-full opacity-40 group-hover:opacity-60 transition-opacity" />
                         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/60">
                           <button 
                             onClick={() => switchStream('camera', cam.id)}
@@ -673,40 +721,61 @@ export default function App() {
               {/* Sidebar Info */}
               <div className="space-y-6">
                 <div className="bg-[#151619] rounded-3xl border border-white/10 p-6">
-                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                    <Activity size={18} className="text-emerald-500" />
-                    Status do Sistema
-                  </h3>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
-                      <span className="text-sm text-white/40">Uso de CPU</span>
-                      <span className="text-sm font-mono">12%</span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
-                      <span className="text-sm text-white/40">Memória</span>
-                      <span className="text-sm font-mono">450MB</span>
-                    </div>
-                    <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
-                      <span className="text-sm text-white/40">FFmpeg</span>
-                      <span className={`text-sm font-mono ${status?.is_streaming ? 'text-emerald-500' : 'text-white/20'}`}>
-                        {status?.is_streaming ? 'EXECUTANDO' : 'OCIOSO'}
-                      </span>
-                    </div>
-                    <div className="pt-2">
-                      <button 
-                        onClick={toggleLoop}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${status?.loop_video ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500' : 'bg-black/20 border-white/5 text-white/40 hover:border-white/20'}`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <Repeat size={16} />
-                          <span className="text-sm font-medium">Repetir Vídeo (Loop)</span>
-                        </div>
-                        <div className={`w-8 h-4 rounded-full relative transition-colors ${status?.loop_video ? 'bg-emerald-500' : 'bg-white/10'}`}>
-                          <div className={`absolute top-1 w-2 h-2 rounded-full bg-white transition-all ${status?.loop_video ? 'left-5' : 'left-1'}`} />
-                        </div>
-                      </button>
-                    </div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold flex items-center gap-2">
+                      <Activity size={18} className="text-emerald-500" />
+                      Status do Sistema
+                    </h3>
+                    <button 
+                      onClick={() => setShowLogs(!showLogs)}
+                      className="text-[10px] font-bold text-emerald-500 hover:underline uppercase tracking-widest"
+                    >
+                      {showLogs ? 'Ocultar Logs' : 'Ver Logs FFmpeg'}
+                    </button>
                   </div>
+                  
+                  {showLogs ? (
+                    <div className="bg-black/40 rounded-xl p-3 font-mono text-[10px] h-64 overflow-y-auto space-y-1 border border-white/5">
+                      {ffmpegLogs.length === 0 ? (
+                        <p className="text-white/20">Aguardando logs...</p>
+                      ) : (
+                        ffmpegLogs.map((log, i) => (
+                          <p key={i} className="text-white/60 break-all">{log}</p>
+                        ))
+                      )}
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
+                        <span className="text-sm text-white/40">Uso de CPU</span>
+                        <span className="text-sm font-mono">12%</span>
+                      </div>
+                      <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
+                        <span className="text-sm text-white/40">Memória</span>
+                        <span className="text-sm font-mono">450MB</span>
+                      </div>
+                      <div className="flex justify-between items-center p-3 bg-black/20 rounded-xl">
+                        <span className="text-sm text-white/40">FFmpeg</span>
+                        <span className={`text-sm font-mono ${status?.is_streaming ? 'text-emerald-500' : 'text-white/20'}`}>
+                          {status?.is_streaming ? 'EXECUTANDO' : 'OCIOSO'}
+                        </span>
+                      </div>
+                      <div className="pt-2">
+                        <button 
+                          onClick={toggleLoop}
+                          className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${status?.loop_video ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500' : 'bg-black/20 border-white/5 text-white/40 hover:border-white/20'}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <Repeat size={16} />
+                            <span className="text-sm font-medium">Repetir Vídeo (Loop)</span>
+                          </div>
+                          <div className={`w-8 h-4 rounded-full relative transition-colors ${status?.loop_video ? 'bg-emerald-500' : 'bg-white/10'}`}>
+                            <div className={`absolute top-1 w-2 h-2 rounded-full bg-white transition-all ${status?.loop_video ? 'left-5' : 'left-1'}`} />
+                          </div>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-[#151619] rounded-3xl border border-white/10 p-6">
@@ -776,6 +845,11 @@ export default function App() {
                       className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
                       placeholder="rtsp://usuario:senha@ip:porta/stream"
                     />
+                    <div className="mt-2 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                      <p className="text-[10px] text-amber-200 leading-relaxed">
+                        <span className="font-bold">AVISO:</span> Para câmeras locais, a URL deve ser acessível pela internet (IP Público ou Redirecionamento de Portas). Se a câmera estiver em sua rede local privada, o servidor na nuvem não conseguirá conectar.
+                      </p>
+                    </div>
                   </div>
                 </div>
                 <button 
