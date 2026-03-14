@@ -57,6 +57,21 @@ async function startServer() {
     cors: { origin: "*" }
   });
 
+  io.on("connection", (socket) => {
+    console.log("Cliente conectado:", socket.id);
+    socket.emit("stream_status", getDb().stream_status);
+
+    socket.on("web_data", (data) => {
+      if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
+        ffmpegProcess.stdin?.write(data);
+      }
+    });
+
+    socket.on("disconnect", () => {
+      console.log("Cliente desconectado:", socket.id);
+    });
+  });
+
   const PORT = Number(process.env.PORT) || 3000;
   const JWT_SECRET = process.env.JWT_SECRET || "stream-control-secret-123";
 
@@ -67,32 +82,45 @@ async function startServer() {
   // FFmpeg Management
   let ffmpegProcess: ChildProcess | null = null;
 
-  const stopStream = () => {
+  const stopStream = (isSwitching = false) => {
     if (ffmpegProcess) {
+      ffmpegProcess.removeAllListeners("close");
       ffmpegProcess.kill("SIGKILL");
       ffmpegProcess = null;
     }
-    const db = getDb();
-    db.stream_status.is_streaming = false;
-    db.stream_status.current_source_type = "none";
-    db.stream_status.current_source_id = null;
-    saveDb(db);
-    io.emit("stream_status", db.stream_status);
+    if (!isSwitching) {
+      const db = getDb();
+      db.stream_status.is_streaming = false;
+      db.stream_status.current_source_type = "none";
+      db.stream_status.current_source_id = null;
+      saveDb(db);
+      io.emit("stream_status", db.stream_status);
+    }
   };
 
-  const startStream = (type: "camera" | "video", id: number) => {
-    stopStream();
+  const startStream = (type: "camera" | "video" | "web", id: number | string) => {
+    stopStream(true);
     const db = getDb();
     let source = "";
+    let inputArgs: string[] = [];
     
     if (type === "camera") {
       const cam = db.cameras.find((c: any) => c.id === id);
       if (!cam) return;
       source = cam.rtsp_url;
-    } else {
+      inputArgs = ["-re", "-i", source];
+    } else if (type === "video") {
       const vid = db.videos.find((v: any) => v.id === id);
       if (!vid) return;
       source = path.join(process.cwd(), vid.file_path);
+      
+      if (db.stream_status.loop_video) {
+        inputArgs = ["-stream_loop", "-1"];
+      }
+      inputArgs.push("-re", "-fflags", "+genpts", "-i", source);
+    } else if (type === "web") {
+      // Input from stdin (browser stream)
+      inputArgs = ["-f", "webm", "-i", "pipe:0"];
     }
 
     const youtubeKey = db.stream_status.youtube_key;
@@ -101,17 +129,8 @@ async function startServer() {
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
 
     // FFmpeg Command
-    const args = [];
-    
-    // Add loop if it's a video and loop is enabled
-    if (type === "video" && db.stream_status.loop_video) {
-      args.push("-stream_loop", "-1");
-    }
-
-    args.push(
-      "-re",
-      "-fflags", "+genpts",
-      "-i", source,
+    const args = [
+      ...inputArgs,
       "-c:v", "libx264",
       "-preset", "veryfast",
       "-tune", "zerolatency",
@@ -129,19 +148,25 @@ async function startServer() {
       "-max_muxing_queue_size", "1024",
       "-threads", "0",
       rtmpUrl
-    );
+    ];
 
-    console.log("Iniciando FFmpeg com fonte:", source);
+    console.log("Iniciando FFmpeg com tipo:", type, "ID:", id);
     ffmpegProcess = spawn("ffmpeg", args);
 
     ffmpegProcess.on("close", (code) => {
       console.log(`Processo FFmpeg encerrado com código ${code}`);
-      stopStream();
+      if (ffmpegProcess) {
+        stopStream();
+      }
+    });
+
+    ffmpegProcess.stderr?.on("data", (data) => {
+      // console.log(`FFmpeg: ${data}`);
     });
 
     db.stream_status.is_streaming = true;
     db.stream_status.current_source_type = type;
-    db.stream_status.current_source_id = id;
+    db.stream_status.current_source_id = id as any;
     saveDb(db);
     io.emit("stream_status", db.stream_status);
   };

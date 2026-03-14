@@ -19,8 +19,8 @@ interface VideoData {
 }
 
 interface StreamStatus {
-  current_source_type: 'camera' | 'video' | 'none';
-  current_source_id: number | null;
+  current_source_type: 'camera' | 'video' | 'web' | 'none';
+  current_source_id: number | string | null;
   is_streaming: boolean;
   youtube_key: string;
   loop_video: boolean;
@@ -40,6 +40,17 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<any>(null);
 
+  // Local Transmission State
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [isLocalStreaming, setIsLocalStreaming] = useState(false);
+  const [pipPosition, setPipPosition] = useState<'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'>('bottom-right');
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const screenVideoRef = useRef<HTMLVideoElement>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement>(null);
+  const animationFrameRef = useRef<number | null>(null);
+
   useEffect(() => {
     if (isLoggedIn) {
       fetchData();
@@ -50,13 +61,64 @@ export default function App() {
 
       socket.on('stream_status', (newStatus: StreamStatus) => {
         setStatus(newStatus);
+        if (!newStatus.is_streaming && isLocalStreaming) {
+          stopWebBroadcast();
+        }
       });
 
       return () => {
         socket.disconnect();
+        if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       };
     }
   }, [isLoggedIn]);
+
+  // Compositor Loop
+  useEffect(() => {
+    if ((screenStream || cameraStream) && canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      if (!ctx) return;
+
+      const draw = () => {
+        if (!ctx || !canvasRef.current) return;
+        
+        // Clear
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+
+        // Draw Screen
+        if (screenStream && screenVideoRef.current) {
+          ctx.drawImage(screenVideoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+
+        // Draw Camera PiP
+        if (cameraStream && cameraVideoRef.current) {
+          const pipWidth = canvasRef.current.width / 4;
+          const pipHeight = (cameraVideoRef.current.videoHeight / cameraVideoRef.current.videoWidth) * pipWidth;
+          let x = 20, y = 20;
+
+          if (pipPosition === 'top-right') x = canvasRef.current.width - pipWidth - 20;
+          if (pipPosition === 'bottom-left') y = canvasRef.current.height - pipHeight - 20;
+          if (pipPosition === 'bottom-right') {
+            x = canvasRef.current.width - pipWidth - 20;
+            y = canvasRef.current.height - pipHeight - 20;
+          }
+
+          // Shadow/Border for PiP
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.strokeRect(x, y, pipWidth, pipHeight);
+          ctx.drawImage(cameraVideoRef.current, x, y, pipWidth, pipHeight);
+        }
+
+        animationFrameRef.current = requestAnimationFrame(draw);
+      };
+
+      draw();
+    } else {
+      if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    }
+  }, [screenStream, cameraStream, pipPosition]);
 
   const fetchData = async () => {
     const token = localStorage.getItem('token');
@@ -106,8 +168,14 @@ export default function App() {
     setIsLoggedIn(false);
   };
 
-  const switchStream = async (type: 'camera' | 'video', id: number) => {
+  const switchStream = async (type: 'camera' | 'video' | 'web', id: number | string) => {
     const token = localStorage.getItem('token');
+    
+    // Optimistic update to show immediate response
+    if (status) {
+      setStatus({ ...status, is_streaming: true, current_source_type: type, current_source_id: id });
+    }
+
     await fetch('/api/stream/switch', {
       method: 'POST',
       headers: { 
@@ -121,11 +189,83 @@ export default function App() {
 
   const stopStream = async () => {
     const token = localStorage.getItem('token');
+    
+    // Optimistic
+    if (status) {
+      setStatus({ ...status, is_streaming: false, current_source_type: 'none', current_source_id: null });
+    }
+
+    if (isLocalStreaming) {
+      stopWebBroadcast();
+    }
+
     await fetch('/api/stream/stop', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` }
     });
     fetchData();
+  };
+
+  // Local Source Handlers
+  const startScreenShare = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      setScreenStream(stream);
+      if (screenVideoRef.current) screenVideoRef.current.srcObject = stream;
+      stream.getVideoTracks()[0].onended = () => setScreenStream(null);
+    } catch (e) {
+      console.error("Erro ao compartilhar tela:", e);
+    }
+  };
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      setCameraStream(stream);
+      if (cameraVideoRef.current) cameraVideoRef.current.srcObject = stream;
+    } catch (e) {
+      console.error("Erro ao acessar câmera:", e);
+    }
+  };
+
+  const stopLocalSources = () => {
+    screenStream?.getTracks().forEach(t => t.stop());
+    cameraStream?.getTracks().forEach(t => t.stop());
+    setScreenStream(null);
+    setCameraStream(null);
+  };
+
+  const startWebBroadcast = async () => {
+    if (!canvasRef.current) return;
+    
+    const stream = canvasRef.current.captureStream(25);
+    // Add audio if available
+    if (screenStream?.getAudioTracks().length) stream.addTrack(screenStream.getAudioTracks()[0]);
+    else if (cameraStream?.getAudioTracks().length) stream.addTrack(cameraStream.getAudioTracks()[0]);
+
+    const recorder = new MediaRecorder(stream, {
+      mimeType: 'video/webm;codecs=vp8',
+      videoBitsPerSecond: 2500000
+    });
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0 && socketRef.current) {
+        socketRef.current.emit('web_data', event.data);
+      }
+    };
+
+    recorder.start(100); // 100ms chunks
+    mediaRecorderRef.current = recorder;
+    setIsLocalStreaming(true);
+    switchStream('web', 'local');
+  };
+
+  const stopWebBroadcast = () => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
+    setIsLocalStreaming(false);
   };
 
   const addCamera = async () => {
@@ -312,6 +452,13 @@ export default function App() {
           >
             <Video size={20} />
             <span className="font-medium">Vídeos</span>
+          </button>
+          <button 
+            onClick={() => setActiveTab('local')}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'local' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-white/60 hover:bg-white/5'}`}
+          >
+            <Monitor size={20} />
+            <span className="font-medium">Transmissão Local</span>
           </button>
           <button 
             onClick={() => setActiveTab('settings')}
@@ -649,6 +796,105 @@ export default function App() {
                       </div>
                     ))
                   )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'local' && (
+            <motion.div 
+              key="local"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="space-y-6"
+            >
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                <div className="lg:col-span-2 space-y-6">
+                  <div className="bg-[#151619] rounded-3xl border border-white/10 overflow-hidden">
+                    <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/20">
+                      <span className="text-xs font-mono uppercase tracking-widest text-white/40">Preview do Compositor</span>
+                      <div className="flex gap-2">
+                        {screenStream && <span className="bg-blue-500/20 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase">Tela Ativa</span>}
+                        {cameraStream && <span className="bg-purple-500/20 text-purple-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase">Câmera Ativa</span>}
+                      </div>
+                    </div>
+                    <div className="aspect-video bg-black relative">
+                      <canvas 
+                        ref={canvasRef} 
+                        width={1280} 
+                        height={720} 
+                        className="w-full h-full object-contain"
+                      />
+                      {/* Hidden elements for capture */}
+                      <video ref={screenVideoRef} autoPlay muted className="hidden" />
+                      <video ref={cameraVideoRef} autoPlay muted className="hidden" />
+                      
+                      {!screenStream && !cameraStream && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center text-white/20">
+                          <Monitor size={48} className="mb-4" />
+                          <p>Nenhuma fonte local selecionada</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <button 
+                      onClick={screenStream ? () => screenStream.getTracks().forEach(t => t.stop()) : startScreenShare}
+                      className={`p-6 rounded-3xl border transition-all flex flex-col items-center gap-4 ${screenStream ? 'bg-blue-500/10 border-blue-500 text-blue-500' : 'bg-[#151619] border-white/10 text-white/40 hover:border-white/20'}`}
+                    >
+                      <Monitor size={32} />
+                      <div className="text-center">
+                        <p className="font-bold">{screenStream ? 'Parar Compartilhamento' : 'Compartilhar Tela'}</p>
+                        <p className="text-xs opacity-60">Janela ou Tela Inteira</p>
+                      </div>
+                    </button>
+
+                    <button 
+                      onClick={cameraStream ? () => cameraStream.getTracks().forEach(t => t.stop()) : startCamera}
+                      className={`p-6 rounded-3xl border transition-all flex flex-col items-center gap-4 ${cameraStream ? 'bg-purple-500/10 border-purple-500 text-purple-500' : 'bg-[#151619] border-white/10 text-white/40 hover:border-white/20'}`}
+                    >
+                      <Camera size={32} />
+                      <div className="text-center">
+                        <p className="font-bold">{cameraStream ? 'Desativar Câmera' : 'Ativar Câmera Local'}</p>
+                        <p className="text-xs opacity-60">Webcam do Computador</p>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-6">
+                  <div className="bg-[#151619] rounded-3xl border border-white/10 p-6">
+                    <h3 className="text-lg font-bold mb-4">Configurações PiP</h3>
+                    <p className="text-sm text-white/40 mb-6">Posição da câmera sobre a tela</p>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const).map(pos => (
+                        <button
+                          key={pos}
+                          onClick={() => setPipPosition(pos)}
+                          className={`p-3 rounded-xl border text-xs font-mono uppercase transition-all ${pipPosition === pos ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-black/20 border-white/5 text-white/40 hover:border-white/20'}`}
+                        >
+                          {pos.replace('-', ' ')}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="mt-8 space-y-4">
+                      <button
+                        disabled={!screenStream && !cameraStream}
+                        onClick={isLocalStreaming ? stopStream : startWebBroadcast}
+                        className={`w-full py-4 rounded-2xl font-bold flex items-center justify-center gap-3 transition-all ${isLocalStreaming ? 'bg-red-500 hover:bg-red-600 text-white shadow-lg shadow-red-500/20' : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg shadow-emerald-500/20 disabled:opacity-20 disabled:cursor-not-allowed'}`}
+                      >
+                        {isLocalStreaming ? <Square size={20} /> : <Play size={20} />}
+                        {isLocalStreaming ? 'PARAR TRANSMISSÃO' : 'TRANSMITIR AGORA'}
+                      </button>
+                      <p className="text-[10px] text-center text-white/20 uppercase tracking-widest">
+                        A transmissão será enviada diretamente para o YouTube
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
             </motion.div>
