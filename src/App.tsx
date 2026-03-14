@@ -73,10 +73,25 @@ export default function App() {
     }
   }, [isLoggedIn]);
 
+  // Sync streams to video elements
+  useEffect(() => {
+    if (screenVideoRef.current && screenStream) {
+      screenVideoRef.current.srcObject = screenStream;
+      screenVideoRef.current.play().catch(e => console.error("Erro ao dar play no vídeo da tela:", e));
+    }
+  }, [screenStream]);
+
+  useEffect(() => {
+    if (cameraVideoRef.current && cameraStream) {
+      cameraVideoRef.current.srcObject = cameraStream;
+      cameraVideoRef.current.play().catch(e => console.error("Erro ao dar play no vídeo da câmera:", e));
+    }
+  }, [cameraStream]);
+
   // Compositor Loop
   useEffect(() => {
     if ((screenStream || cameraStream) && canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
+      const ctx = canvasRef.current.getContext('2d', { alpha: false });
       if (!ctx) return;
 
       const draw = () => {
@@ -87,14 +102,15 @@ export default function App() {
         ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
 
         // Draw Screen
-        if (screenStream && screenVideoRef.current) {
+        if (screenStream && screenVideoRef.current && screenVideoRef.current.readyState >= 2) {
           ctx.drawImage(screenVideoRef.current, 0, 0, canvasRef.current.width, canvasRef.current.height);
         }
 
         // Draw Camera PiP
-        if (cameraStream && cameraVideoRef.current) {
+        if (cameraStream && cameraVideoRef.current && cameraVideoRef.current.readyState >= 2) {
           const pipWidth = canvasRef.current.width / 4;
-          const pipHeight = (cameraVideoRef.current.videoHeight / cameraVideoRef.current.videoWidth) * pipWidth;
+          const videoRatio = cameraVideoRef.current.videoHeight / cameraVideoRef.current.videoWidth || 0.75;
+          const pipHeight = videoRatio * pipWidth;
           let x = 20, y = 20;
 
           if (pipPosition === 'top-right') x = canvasRef.current.width - pipWidth - 20;
@@ -117,6 +133,11 @@ export default function App() {
       draw();
     } else {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+      // Clear canvas if no streams
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+      }
     }
   }, [screenStream, cameraStream, pipPosition]);
 
@@ -211,7 +232,6 @@ export default function App() {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
       setScreenStream(stream);
-      if (screenVideoRef.current) screenVideoRef.current.srcObject = stream;
       stream.getVideoTracks()[0].onended = () => setScreenStream(null);
     } catch (e) {
       console.error("Erro ao compartilhar tela:", e);
@@ -222,7 +242,6 @@ export default function App() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setCameraStream(stream);
-      if (cameraVideoRef.current) cameraVideoRef.current.srcObject = stream;
     } catch (e) {
       console.error("Erro ao acessar câmera:", e);
     }
@@ -826,9 +845,9 @@ export default function App() {
                         height={720} 
                         className="w-full h-full object-contain"
                       />
-                      {/* Hidden elements for capture */}
-                      <video ref={screenVideoRef} autoPlay muted className="hidden" />
-                      <video ref={cameraVideoRef} autoPlay muted className="hidden" />
+                      {/* Hidden elements for capture - not using 'hidden' to avoid display:none issues */}
+                      <video ref={screenVideoRef} autoPlay muted playsInline className="absolute opacity-0 pointer-events-none w-0 h-0" />
+                      <video ref={cameraVideoRef} autoPlay muted playsInline className="absolute opacity-0 pointer-events-none w-0 h-0" />
                       
                       {!screenStream && !cameraStream && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-white/20">
