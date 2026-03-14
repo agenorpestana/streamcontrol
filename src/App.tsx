@@ -253,7 +253,13 @@ export default function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
       setCameraStream(stream);
     } catch (e) {
-      console.error("Erro ao acessar câmera:", e);
+      console.warn("Erro ao acessar câmera com áudio, tentando apenas vídeo:", e);
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        setCameraStream(stream);
+      } catch (e2) {
+        console.error("Erro ao acessar câmera:", e2);
+      }
     }
   };
 
@@ -285,13 +291,15 @@ export default function App() {
       stream.addTrack(audioTrack);
     } else {
       // Create silent audio track if none exists
-      const ctx = new AudioContext();
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0;
       const dst = ctx.createMediaStreamDestination();
-      oscillator.connect(dst);
+      oscillator.connect(gain);
+      gain.connect(dst);
       oscillator.start();
       const silentTrack = dst.stream.getAudioTracks()[0];
-      silentTrack.enabled = false; // It's silent anyway, but just in case
       stream.addTrack(silentTrack);
     }
 
@@ -301,13 +309,14 @@ export default function App() {
       audioBitsPerSecond: 128000
     });
 
-    recorder.ondataavailable = (event) => {
+    recorder.ondataavailable = async (event) => {
       if (event.data.size > 0 && socketRef.current) {
-        socketRef.current.emit('web_data', event.data);
+        const buffer = await event.data.arrayBuffer();
+        socketRef.current.emit('web_data', buffer);
       }
     };
 
-    recorder.start(100); // 100ms chunks
+    recorder.start(1000); // 1s chunks for better FFmpeg stability
     mediaRecorderRef.current = recorder;
   };
 

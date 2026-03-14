@@ -63,7 +63,9 @@ async function startServer() {
 
     socket.on("web_data", (data) => {
       if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
-        ffmpegProcess.stdin?.write(data);
+        if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+          ffmpegProcess.stdin.write(Buffer.from(data));
+        }
       }
     });
 
@@ -141,13 +143,12 @@ async function startServer() {
       }
       inputArgs.push("-re", "-fflags", "+genpts", "-i", source);
     } else if (type === "web") {
-      // Input from stdin (browser stream) + silent audio fallback
-      // We use -fflags +genpts to help with streaming timestamps from the browser
+      // Input from stdin (browser stream)
+      // We use -fflags +genpts and -f webm for the input pipe
       inputArgs = [
         "-f", "webm", 
         "-fflags", "+genpts",
-        "-i", "pipe:0",
-        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+        "-i", "pipe:0"
       ];
     }
 
@@ -178,12 +179,11 @@ async function startServer() {
       args.push("-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
     } else if (type === "camera") {
       // For cameras, we force the silent audio to ensure YouTube stays happy
+      args.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100");
       args.push("-map", "0:v:0", "-map", "1:a:0", "-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
     } else if (type === "web") {
-      // For web, we try to use the browser's audio if it exists, otherwise fallback to silence
-      // We use a filter_complex to merge or fallback
-      const filterComplex = "[0:a]aresample=async=1:min_hard_comp=0.100000:first_pts=0[a0];[1:a][a0]amix=inputs=2:duration=first:dropout_transition=2[aout]";
-      args.push("-filter_complex", filterComplex, "-map", "0:v:0", "-map", "[aout]", "-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
+      // For web, we assume the browser sends both video and audio (we force it in App.tsx)
+      args.push("-map", "0:v:0", "-map", "0:a:0", "-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
     }
 
     console.log("Iniciando FFmpeg com tipo:", type, "ID:", id);
