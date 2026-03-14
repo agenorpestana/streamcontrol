@@ -68,9 +68,15 @@ async function startServer() {
       if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
         if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
           try {
-            ffmpegProcess.stdin.write(Buffer.from(new Uint8Array(data)));
+            const buffer = Buffer.from(new Uint8Array(data));
+            // Log only every 10th chunk to avoid flooding
+            if (Math.random() < 0.1) {
+              console.log(`[SERVER] Recebido chunk web_data: ${buffer.length} bytes`);
+            }
+            ffmpegProcess.stdin.write(buffer);
           } catch (e) {
             console.error("Erro ao escrever no stdin do FFmpeg:", e);
+            addLog(`ERRO STDIN: ${e}\n`);
           }
         }
       }
@@ -103,6 +109,7 @@ async function startServer() {
   };
 
   const stopStream = (isSwitching = false) => {
+    console.log(`[SERVER] stopStream chamado (isSwitching=${isSwitching})`);
     if (ffmpegProcess) {
       ffmpegProcess.removeAllListeners("close");
       ffmpegProcess.kill("SIGKILL");
@@ -166,14 +173,18 @@ async function startServer() {
       // Map everything from the video file
       mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; // ? makes audio optional
     } else if (type === "web") {
-      // Input 0: Browser Stream (WebM)
-      // Simplificado ao máximo para teste
+      // Input 0: Browser Stream (WebM/Matroska)
+      // Matroska is often more robust for streaming via pipes
       inputArgs = [
-        "-f", "webm", 
+        "-loglevel", "debug", // Temporary for deep debugging
+        "-probesize", "32",
+        "-analyzeduration", "0",
+        "-fflags", "+nobuffer+genpts+igndts",
+        "-f", "matroska", 
         "-i", "pipe:0",
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
       ];
-      // Map video from browser and audio from silence
+      // Map video from browser (input 0) and audio from silence (input 1)
       mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
     }
 
@@ -225,12 +236,12 @@ async function startServer() {
     });
 
     if (type === "web") {
-      console.log("Aguardando 1s para sinalizar prontidão do pipe...");
+      console.log("Aguardando 2s para sinalizar prontidão do pipe...");
       // Give FFmpeg a moment to initialize the pipe before telling the client to send data
       setTimeout(() => {
         console.log("Sinalizando server_ready_for_web");
         io.emit("server_ready_for_web");
-      }, 1000);
+      }, 2000);
     }
 
     ffmpegProcess.on("close", (code) => {

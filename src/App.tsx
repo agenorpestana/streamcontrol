@@ -297,7 +297,11 @@ export default function App() {
   };
 
   const startActualRecorder = () => {
-    if (!canvasRef.current || !isLocalStreaming) return;
+    setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Executando startActualRecorder...\n"]);
+    if (!canvasRef.current || !isLocalStreaming) {
+      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ABORTADO: canvas=${!!canvasRef.current}, isLocalStreaming=${isLocalStreaming}\n`]);
+      return;
+    }
 
     // Small extra delay to ensure FFmpeg pipe is fully open
     setTimeout(() => {
@@ -334,10 +338,23 @@ export default function App() {
           const buffer = await event.data.arrayBuffer();
           // Send as raw binary
           socketRef.current.emit('web_data', buffer);
+          
+          // Log occasionally
+          if (Math.random() < 0.05) {
+            setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Enviando chunk de vídeo: ${event.data.size} bytes\n`]);
+          }
         }
       };
 
-      recorder.start(1000); // 1s chunks for maximum stability
+      recorder.onstart = () => {
+        setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] MediaRecorder iniciado com sucesso.\n"]);
+      };
+
+      recorder.onerror = (e) => {
+        setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
+      };
+
+      recorder.start(200); // Smaller chunks (200ms) for faster initialization
       mediaRecorderRef.current = recorder;
     }, 500);
   };
