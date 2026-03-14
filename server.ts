@@ -184,10 +184,10 @@ async function startServer() {
 
   // Auth Middleware
   const authenticate = (req: any, res: any, next: any) => {
-    const token = req.headers.authorization?.split(" ")[1];
+    const token = req.headers.authorization?.split(" ")[1] || req.query.token;
     if (!token) return res.status(401).json({ error: "Não autorizado" });
     try {
-      const decoded = jwt.verify(token, JWT_SECRET);
+      const decoded = jwt.verify(token as string, JWT_SECRET);
       req.user = decoded;
       next();
     } catch (e) {
@@ -246,13 +246,6 @@ async function startServer() {
     res.setHeader("Content-Type", "image/jpeg");
     ffmpeg.stdout.pipe(res);
     
-    // Timeout to prevent hanging
-    const timeout = setTimeout(() => {
-      ffmpeg.kill("SIGKILL");
-      if (!res.headersSent) res.status(504).end();
-    }, 5000);
-
-    ffmpeg.on("close", () => clearTimeout(timeout));
     ffmpeg.on("error", () => {
       clearTimeout(timeout);
       if (!res.headersSent) res.status(500).end();

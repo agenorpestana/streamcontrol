@@ -374,21 +374,23 @@ export default function App() {
   };
 
   const CameraPreview = ({ camId, className }: { camId: number, className?: string }) => {
-    const [src, setSrc] = useState(`/api/cameras/${camId}/snapshot?t=${Date.now()}`);
+    const token = localStorage.getItem('token');
+    const getSnapshotUrl = () => `/api/cameras/${camId}/snapshot?token=${token}&t=${Date.now()}`;
+    const [src, setSrc] = useState(getSnapshotUrl());
     const [error, setError] = useState(false);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
       const interval = setInterval(() => {
-        setSrc(`/api/cameras/${camId}/snapshot?t=${Date.now()}`);
+        setSrc(getSnapshotUrl());
       }, 10000); // Increased interval to 10s to give more time for FFmpeg
       return () => clearInterval(interval);
-    }, [camId]);
+    }, [camId, token]);
 
     const refresh = () => {
       setLoading(true);
       setError(false);
-      setSrc(`/api/cameras/${camId}/snapshot?t=${Date.now()}`);
+      setSrc(getSnapshotUrl());
     };
 
     return (
