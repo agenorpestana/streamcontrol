@@ -71,9 +71,7 @@ async function startServer() {
     });
 
     socket.on("web_ready_to_start", () => {
-      if (getDb().stream_status.current_source_type === "web") {
-        socket.emit("server_ready_for_web");
-      }
+      // Handshake is now handled globally in startStream to ensure FFmpeg is alive
     });
 
     socket.on("disconnect", () => {
@@ -148,9 +146,9 @@ async function startServer() {
       mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; // ? makes audio optional
     } else if (type === "web") {
       // Input 0: Browser Stream (WebM)
-      // Added thread_queue_size to handle network jitter
+      // Using -fflags nobuffer for lowest latency on the input pipe
       inputArgs = [
-        "-thread_queue_size", "1024",
+        "-fflags", "nobuffer",
         "-f", "webm", 
         "-i", "pipe:0",
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
@@ -162,7 +160,7 @@ async function startServer() {
     const youtubeKey = db.stream_status.youtube_key;
     if (!youtubeKey) return;
 
-    // Switching back to RTMP for lower overhead with live browser streams
+    // RTMP is generally more compatible for direct pipe streaming
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
 
     // FFmpeg Command: Inputs first, then Encoding, then Mapping, then Output
@@ -177,14 +175,13 @@ async function startServer() {
       "-r", "25",
       "-g", "50",
       "-keyint_min", "50",
-      "-sc_threshold", "0", // Force constant GOP
+      "-sc_threshold", "0", 
       "-b:v", "2500k",
       "-maxrate", "2500k",
       "-bufsize", "5000k",
       "-c:a", "aac",
       "-b:a", "128k",
       "-ar", "44100",
-      "-af", "aresample=async=1", // Keep audio in sync
       ...mappingArgs,
       "-f", "flv",
       "-flvflags", "no_duration_filesize",
@@ -195,6 +192,13 @@ async function startServer() {
 
     console.log("Iniciando FFmpeg:", args.join(" "));
     ffmpegProcess = spawn("ffmpeg", args);
+
+    if (type === "web") {
+      // Give FFmpeg a moment to initialize the pipe before telling the client to send data
+      setTimeout(() => {
+        io.emit("server_ready_for_web");
+      }, 1000);
+    }
 
     ffmpegProcess.on("close", (code) => {
       console.log(`Processo FFmpeg encerrado com código ${code}`);
