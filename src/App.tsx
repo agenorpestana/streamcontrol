@@ -546,12 +546,23 @@ export default function App() {
               {/* Live Preview / Program */}
               <div className="xl:col-span-2 space-y-6">
                 <div className="bg-[#151619] rounded-3xl border border-white/10 overflow-hidden shadow-2xl">
-                  <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/20">
-                    <span className="text-xs font-mono uppercase tracking-widest text-white/40">Saída do Programa</span>
-                    {status?.is_streaming && (
-                      <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter">No Ar</span>
-                    )}
-                  </div>
+                    <div className="p-4 border-b border-white/10 flex items-center justify-between bg-black/20">
+                      <span className="text-xs font-mono uppercase tracking-widest text-white/40">Saída do Programa</span>
+                      <div className="flex items-center gap-3">
+                        {status?.is_streaming && status.current_source_type === 'video' && isLocalStreaming && (
+                          <button 
+                            onClick={() => switchStream('web', 'local')}
+                            className="bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-bold px-3 py-1 rounded uppercase tracking-tight transition-all flex items-center gap-1"
+                          >
+                            <Monitor size={12} />
+                            Voltar para Local
+                          </button>
+                        )}
+                        {status?.is_streaming && (
+                          <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter">No Ar</span>
+                        )}
+                      </div>
+                    </div>
                   <div className="aspect-video bg-black flex items-center justify-center relative">
                     {status?.is_streaming ? (
                       <div className="w-full h-full relative">
@@ -600,6 +611,14 @@ export default function App() {
                           </div>
                         )}
                         <div className="absolute top-4 right-4 flex gap-2">
+                          {status.current_source_type === 'video' && isLocalStreaming && (
+                            <button 
+                              onClick={() => switchStream('web', 'local')}
+                              className="bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-bold px-3 py-1 rounded uppercase tracking-tight shadow-lg flex items-center gap-1"
+                            >
+                              <Square size={10} /> Parar Comercial
+                            </button>
+                          )}
                           <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter">No Ar</span>
                           {status.loop_video && status.current_source_type === 'video' && (
                             <span className="bg-emerald-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
