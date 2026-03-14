@@ -24,7 +24,7 @@ const initDb = () => {
         { id: 2, name: "Câmera 02", rtsp_url: "rtsp://demo:demo@static.cartesian.io:554/live/ch0", is_active: true }
       ],
       videos: [],
-      stream_status: { current_source_type: "none", current_source_id: null, is_streaming: false, youtube_key: "" }
+      stream_status: { current_source_type: "none", current_source_id: null, is_streaming: false, youtube_key: "", loop_video: false }
     }, null, 2));
   }
 };
@@ -101,7 +101,14 @@ async function startServer() {
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
 
     // FFmpeg Command
-    const args = [
+    const args = [];
+    
+    // Add loop if it's a video and loop is enabled
+    if (type === "video" && db.stream_status.loop_video) {
+      args.push("-stream_loop", "-1");
+    }
+
+    args.push(
       "-re",
       "-i", source,
       "-c:v", "libx264",
@@ -115,7 +122,7 @@ async function startServer() {
       "-b:a", "128k",
       "-f", "flv",
       rtmpUrl
-    ];
+    );
 
     console.log("Iniciando FFmpeg com fonte:", source);
     ffmpegProcess = spawn("ffmpeg", args);
@@ -221,6 +228,21 @@ async function startServer() {
     const db = getDb();
     db.stream_status.youtube_key = req.body.key;
     saveDb(db);
+    res.json({ success: true });
+  });
+
+  app.post("/api/status/loop", authenticate, (req, res) => {
+    const { loop } = req.body;
+    const db = getDb();
+    db.stream_status.loop_video = loop;
+    saveDb(db);
+    
+    // Se estiver transmitindo um vídeo, reinicia para aplicar o loop
+    if (db.stream_status.is_streaming && db.stream_status.current_source_type === "video") {
+      startStream("video", db.stream_status.current_source_id!);
+    }
+    
+    io.emit("stream_status", db.stream_status);
     res.json({ success: true });
   });
 

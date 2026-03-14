@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload } from 'lucide-react';
+import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Types
@@ -22,6 +22,7 @@ interface StreamStatus {
   current_source_id: number | null;
   is_streaming: boolean;
   youtube_key: string;
+  loop_video: boolean;
 }
 
 export default function App() {
@@ -193,6 +194,20 @@ export default function App() {
     alert('Chave do YouTube Salva');
   };
 
+  const toggleLoop = async () => {
+    const token = localStorage.getItem('token');
+    const newLoop = !status?.loop_video;
+    await fetch('/api/status/loop', {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}` 
+      },
+      body: JSON.stringify({ loop: newLoop })
+    });
+    // Status will be updated via socket or next fetch
+  };
+
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-[#0a0a0a] flex items-center justify-center p-4 font-sans text-white">
@@ -337,9 +352,30 @@ export default function App() {
                   </div>
                   <div className="aspect-video bg-black flex items-center justify-center relative">
                     {status?.is_streaming ? (
-                      <div className="text-center">
-                        <Activity className="w-12 h-12 text-emerald-500 mx-auto mb-4 animate-pulse" />
-                        <p className="font-mono text-sm text-white/60">Fonte Atual: {status.current_source_type === 'camera' ? 'Câmera' : 'Vídeo'} #{status.current_source_id}</p>
+                      <div className="w-full h-full relative">
+                        {status.current_source_type === 'video' ? (
+                          <video 
+                            key={status.current_source_id}
+                            src={`/${videos.find(v => v.id === status.current_source_id)?.file_path}`}
+                            autoPlay
+                            muted
+                            loop={status.loop_video}
+                            className="w-full h-full object-contain"
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full">
+                            <Activity className="w-12 h-12 text-emerald-500 mx-auto mb-4 animate-pulse" />
+                            <p className="font-mono text-sm text-white/60">Fonte Atual: Câmera #{status.current_source_id}</p>
+                          </div>
+                        )}
+                        <div className="absolute top-4 right-4 flex gap-2">
+                          <span className="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter">No Ar</span>
+                          {status.loop_video && status.current_source_type === 'video' && (
+                            <span className="bg-emerald-500 text-white text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-tighter flex items-center gap-1">
+                              <Repeat size={10} /> Loop
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ) : (
                       <div className="text-center p-10">
@@ -405,6 +441,20 @@ export default function App() {
                       <span className={`text-sm font-mono ${status?.is_streaming ? 'text-emerald-500' : 'text-white/20'}`}>
                         {status?.is_streaming ? 'EXECUTANDO' : 'OCIOSO'}
                       </span>
+                    </div>
+                    <div className="pt-2">
+                      <button 
+                        onClick={toggleLoop}
+                        className={`w-full flex items-center justify-between p-3 rounded-xl border transition-all ${status?.loop_video ? 'bg-emerald-500/10 border-emerald-500 text-emerald-500' : 'bg-black/20 border-white/5 text-white/40 hover:border-white/20'}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Repeat size={16} />
+                          <span className="text-sm font-medium">Repetir Vídeo (Loop)</span>
+                        </div>
+                        <div className={`w-8 h-4 rounded-full relative transition-colors ${status?.loop_video ? 'bg-emerald-500' : 'bg-white/10'}`}>
+                          <div className={`absolute top-1 w-2 h-2 rounded-full bg-white transition-all ${status?.loop_video ? 'left-5' : 'left-1'}`} />
+                        </div>
+                      </button>
                     </div>
                   </div>
                 </div>
