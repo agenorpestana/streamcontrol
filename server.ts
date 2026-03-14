@@ -110,17 +110,24 @@ async function startServer() {
 
     args.push(
       "-re",
+      "-fflags", "+genpts",
       "-i", source,
       "-c:v", "libx264",
       "-preset", "veryfast",
-      "-b:v", "3000k",
-      "-maxrate", "3000k",
-      "-bufsize", "6000k",
+      "-tune", "zerolatency",
+      "-r", "25",
+      "-b:v", "2500k",
+      "-maxrate", "2500k",
+      "-bufsize", "5000k",
       "-pix_fmt", "yuv420p",
       "-g", "50",
       "-c:a", "aac",
       "-b:a", "128k",
+      "-ar", "44100",
       "-f", "flv",
+      "-flvflags", "no_duration_filesize",
+      "-max_muxing_queue_size", "1024",
+      "-threads", "0",
       rtmpUrl
     );
 

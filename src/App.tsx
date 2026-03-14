@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { io } from 'socket.io-client';
 
 // Types
 interface CameraData {
@@ -37,10 +38,23 @@ export default function App() {
   const [ytKey, setYtKey] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const socketRef = useRef<any>(null);
 
   useEffect(() => {
     if (isLoggedIn) {
       fetchData();
+      
+      // Initialize socket
+      const socket = io();
+      socketRef.current = socket;
+
+      socket.on('stream_status', (newStatus: StreamStatus) => {
+        setStatus(newStatus);
+      });
+
+      return () => {
+        socket.disconnect();
+      };
     }
   }, [isLoggedIn]);
 
@@ -197,15 +211,26 @@ export default function App() {
   const toggleLoop = async () => {
     const token = localStorage.getItem('token');
     const newLoop = !status?.loop_video;
-    await fetch('/api/status/loop', {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}` 
-      },
-      body: JSON.stringify({ loop: newLoop })
-    });
-    // Status will be updated via socket or next fetch
+    
+    // Optimistic update
+    if (status) {
+      setStatus({ ...status, loop_video: newLoop });
+    }
+
+    try {
+      await fetch('/api/status/loop', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ loop: newLoop })
+      });
+    } catch (e) {
+      console.error("Erro ao alternar loop:", e);
+      // Revert on error
+      fetchData();
+    }
   };
 
   if (!isLoggedIn) {
