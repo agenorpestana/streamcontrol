@@ -116,8 +116,15 @@ async function startServer() {
       const cam = db.cameras.find((c: any) => c.id === id);
       if (!cam) return;
       source = cam.rtsp_url;
-      // Removed -re for live RTSP streams as it can cause sync issues
-      inputArgs = ["-rtsp_transport", "tcp", "-i", source];
+      // Added analyzeduration and probesize for faster RTSP detection
+      // Added silent audio source fallback for YouTube compatibility
+      inputArgs = [
+        "-rtsp_transport", "tcp", 
+        "-analyzeduration", "10M", 
+        "-probesize", "10M", 
+        "-i", source,
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+      ];
     } else if (type === "video") {
       const vid = db.videos.find((v: any) => v.id === id);
       if (!vid) return;
@@ -128,8 +135,11 @@ async function startServer() {
       }
       inputArgs.push("-re", "-fflags", "+genpts", "-i", source);
     } else if (type === "web") {
-      // Input from stdin (browser stream)
-      inputArgs = ["-f", "webm", "-i", "pipe:0"];
+      // Input from stdin (browser stream) + silent audio fallback
+      inputArgs = [
+        "-f", "webm", "-i", "pipe:0",
+        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+      ];
     }
 
     const youtubeKey = db.stream_status.youtube_key;
@@ -152,12 +162,17 @@ async function startServer() {
       "-c:a", "aac",
       "-b:a", "128k",
       "-ar", "44100",
-      "-f", "flv",
-      "-flvflags", "no_duration_filesize",
-      "-max_muxing_queue_size", "1024",
-      "-threads", "0",
-      rtmpUrl
     ];
+
+    // Mapping logic: 
+    // For video files, use their own audio.
+    // For camera/web, use silent audio if needed or mix.
+    if (type === "video") {
+      args.push("-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
+    } else {
+      // Map video from first input and audio from second input (silence)
+      args.push("-map", "0:v:0", "-map", "1:a:0", "-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
+    }
 
     console.log("Iniciando FFmpeg com tipo:", type, "ID:", id);
     ffmpegProcess = spawn("ffmpeg", args);
