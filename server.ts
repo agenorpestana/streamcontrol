@@ -32,6 +32,12 @@ initDb();
 const getDb = () => JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
 const saveDb = (data: any) => fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
 
+// Ensure uploads directory exists
+const uploadsDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
@@ -39,7 +45,7 @@ async function startServer() {
     cors: { origin: "*" }
   });
 
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
   const JWT_SECRET = process.env.JWT_SECRET || "stream-control-secret-123";
 
   app.use(cors());

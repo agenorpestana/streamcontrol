@@ -44,7 +44,8 @@ npm run build
 ```
 
 ## 5. Environment Variables
-Create a `.env` file:
+Create a `.env` file in the root directory. **IMPORTANT:** The `PORT` must match the port configured in your Nginx proxy (default for StreamControl in your script is 3006).
+
 ```env
 PORT=3006
 DB_HOST=localhost
@@ -52,12 +53,15 @@ DB_USER=your_user
 DB_PASSWORD=your_password
 DB_NAME=streamcontrol
 JWT_SECRET=your_secret_key
+NODE_ENV=production
 ```
 
 ## 6. PM2 Process
+The application uses `tsx` to run the TypeScript server directly.
 ```bash
 sudo npm install -g pm2
-pm2 start "npx tsx server.ts" --name "streamcontrol-api"
+# The install script handles this, but manually:
+PORT=3006 pm2 start "npx tsx server.ts" --name "streamcontrol-api"
 pm2 save
 ```
 
