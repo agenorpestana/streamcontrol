@@ -146,9 +146,9 @@ async function startServer() {
       mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; // ? makes audio optional
     } else if (type === "web") {
       // Input 0: Browser Stream (WebM)
-      // Using -fflags nobuffer for lowest latency on the input pipe
+      // Using -fflags +genpts and -re (read at native rate) for pipe stability
       inputArgs = [
-        "-fflags", "nobuffer",
+        "-fflags", "+genpts",
         "-f", "webm", 
         "-i", "pipe:0",
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
@@ -191,7 +191,18 @@ async function startServer() {
     ];
 
     console.log("Iniciando FFmpeg:", args.join(" "));
-    ffmpegProcess = spawn("ffmpeg", args);
+    io.emit("ffmpeg_log", `Comando: ffmpeg ${args.join(" ")}\n`);
+
+    try {
+      ffmpegProcess = spawn("ffmpeg", args);
+    } catch (e: any) {
+      io.emit("ffmpeg_log", `ERRO AO INICIAR FFMPEG: ${e.message}\n`);
+      return;
+    }
+
+    ffmpegProcess.on("error", (err) => {
+      io.emit("ffmpeg_log", `ERRO NO PROCESSO FFMPEG: ${err.message}\n`);
+    });
 
     if (type === "web") {
       // Give FFmpeg a moment to initialize the pipe before telling the client to send data
