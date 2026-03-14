@@ -160,23 +160,29 @@ async function startServer() {
     const youtubeKey = db.stream_status.youtube_key;
     if (!youtubeKey) return;
 
-    const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
+    // Using RTMPS for better stability and compatibility
+    const rtmpUrl = `rtmps://a.rtmps.youtube.com/live2/${youtubeKey}`;
 
     // FFmpeg Command: Inputs first, then Encoding, then Mapping, then Output
+    // Optimized for YouTube: Constant GOP (2s), High Profile, CBR-like bitrate
     const args = [
       ...inputArgs,
       "-c:v", "libx264",
       "-preset", "veryfast",
-      "-tune", "zerolatency",
+      "-profile:v", "high",
+      "-level", "4.1",
+      "-pix_fmt", "yuv420p",
       "-r", "25",
+      "-g", "50",
+      "-keyint_min", "50",
+      "-sc_threshold", "0", // Force constant GOP
       "-b:v", "2500k",
       "-maxrate", "2500k",
       "-bufsize", "5000k",
-      "-pix_fmt", "yuv420p",
-      "-g", "50",
       "-c:a", "aac",
       "-b:a", "128k",
       "-ar", "44100",
+      "-af", "aresample=async=1", // Keep audio in sync
       ...mappingArgs,
       "-f", "flv",
       "-flvflags", "no_duration_filesize",

@@ -310,7 +310,7 @@ export default function App() {
 
     const recorder = new MediaRecorder(stream, {
       mimeType: 'video/webm;codecs=vp8,opus',
-      videoBitsPerSecond: 2500000,
+      videoBitsPerSecond: 3000000, // Slightly higher for better quality
       audioBitsPerSecond: 128000
     });
 
@@ -321,7 +321,8 @@ export default function App() {
       }
     };
 
-    recorder.start(1000); // 1s chunks for better FFmpeg stability
+    // Use a smaller timeslice for more frequent updates, but ensure FFmpeg handles it
+    recorder.start(500); 
     mediaRecorderRef.current = recorder;
   };
 
