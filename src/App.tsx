@@ -501,6 +501,17 @@ export default function App() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto p-6 lg:p-10">
+        {/* Hidden elements for capture and composition - persistent across tabs */}
+        <div className="fixed opacity-0 pointer-events-none w-0 h-0 overflow-hidden">
+          <canvas 
+            ref={canvasRef} 
+            width={1280} 
+            height={720} 
+          />
+          <video ref={screenVideoRef} autoPlay muted playsInline />
+          <video ref={cameraVideoRef} autoPlay muted playsInline />
+        </div>
+
         <header className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h2 className="text-3xl font-bold capitalize">{activeTab === 'dashboard' ? 'Painel de Controle' : activeTab === 'cameras' ? 'Câmeras' : activeTab === 'videos' ? 'Vídeos Comerciais' : 'Configurações'}</h2>
@@ -553,6 +564,35 @@ export default function App() {
                             loop={status.loop_video}
                             className="w-full h-full object-contain"
                           />
+                        ) : status.current_source_type === 'web' ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center">
+                            <div className="w-full h-full max-h-[90%] relative">
+                               <canvas 
+                                 id="dashboard-preview-canvas"
+                                 className="w-full h-full object-contain"
+                                 ref={(el) => {
+                                   if (el && canvasRef.current) {
+                                     const ctx = el.getContext('2d');
+                                     const sourceCanvas = canvasRef.current;
+                                     let active = true;
+                                     const render = () => {
+                                       if (!active) return;
+                                       if (ctx && sourceCanvas) {
+                                         ctx.drawImage(sourceCanvas, 0, 0, el.width, el.height);
+                                         requestAnimationFrame(render);
+                                       }
+                                     };
+                                     render();
+                                     // This is still a bit hacky but better with the 'active' flag if we could clean it up.
+                                     // In React, it's better to use a dedicated component for this.
+                                   }
+                                 }}
+                                 width={1280}
+                                 height={720}
+                               />
+                            </div>
+                            <p className="font-mono text-[10px] text-white/40 mt-2 uppercase tracking-widest">Transmissão Local Ativa</p>
+                          </div>
                         ) : (
                           <div className="flex flex-col items-center justify-center h-full">
                             <Activity className="w-12 h-12 text-emerald-500 mx-auto mb-4 animate-pulse" />
@@ -840,14 +880,26 @@ export default function App() {
                     </div>
                     <div className="aspect-video bg-black relative">
                       <canvas 
-                        ref={canvasRef} 
-                        width={1280} 
-                        height={720} 
+                        id="local-preview-canvas"
                         className="w-full h-full object-contain"
+                        ref={(el) => {
+                          if (el && canvasRef.current) {
+                            const ctx = el.getContext('2d');
+                            const sourceCanvas = canvasRef.current;
+                            let active = true;
+                            const render = () => {
+                              if (!active) return;
+                              if (ctx && sourceCanvas) {
+                                ctx.drawImage(sourceCanvas, 0, 0, el.width, el.height);
+                                requestAnimationFrame(render);
+                              }
+                            };
+                            render();
+                          }
+                        }}
+                        width={1280}
+                        height={720}
                       />
-                      {/* Hidden elements for capture - not using 'hidden' to avoid display:none issues */}
-                      <video ref={screenVideoRef} autoPlay muted playsInline className="absolute opacity-0 pointer-events-none w-0 h-0" />
-                      <video ref={cameraVideoRef} autoPlay muted playsInline className="absolute opacity-0 pointer-events-none w-0 h-0" />
                       
                       {!screenStream && !cameraStream && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center text-white/20">
@@ -859,27 +911,53 @@ export default function App() {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <button 
-                      onClick={screenStream ? () => screenStream.getTracks().forEach(t => t.stop()) : startScreenShare}
-                      className={`p-6 rounded-3xl border transition-all flex flex-col items-center gap-4 ${screenStream ? 'bg-blue-500/10 border-blue-500 text-blue-500' : 'bg-[#151619] border-white/10 text-white/40 hover:border-white/20'}`}
-                    >
-                      <Monitor size={32} />
-                      <div className="text-center">
-                        <p className="font-bold">{screenStream ? 'Parar Compartilhamento' : 'Compartilhar Tela'}</p>
-                        <p className="text-xs opacity-60">Janela ou Tela Inteira</p>
-                      </div>
-                    </button>
+                    <div className="space-y-2">
+                      <button 
+                        onClick={screenStream ? () => screenStream.getTracks().forEach(t => t.stop()) : startScreenShare}
+                        className={`w-full p-6 rounded-3xl border transition-all flex flex-col items-center gap-4 ${screenStream ? 'bg-blue-500/10 border-blue-500 text-blue-500' : 'bg-[#151619] border-white/10 text-white/40 hover:border-white/20'}`}
+                      >
+                        <Monitor size={32} />
+                        <div className="text-center">
+                          <p className="font-bold">{screenStream ? 'Trocar Compartilhamento' : 'Compartilhar Tela'}</p>
+                          <p className="text-xs opacity-60">Janela ou Tela Inteira</p>
+                        </div>
+                      </button>
+                      {screenStream && (
+                        <button 
+                          onClick={() => {
+                            screenStream.getTracks().forEach(t => t.stop());
+                            setScreenStream(null);
+                          }}
+                          className="w-full py-2 bg-red-500/10 text-red-500 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-red-500/20 transition-all"
+                        >
+                          Parar Tela
+                        </button>
+                      )}
+                    </div>
 
-                    <button 
-                      onClick={cameraStream ? () => cameraStream.getTracks().forEach(t => t.stop()) : startCamera}
-                      className={`p-6 rounded-3xl border transition-all flex flex-col items-center gap-4 ${cameraStream ? 'bg-purple-500/10 border-purple-500 text-purple-500' : 'bg-[#151619] border-white/10 text-white/40 hover:border-white/20'}`}
-                    >
-                      <Camera size={32} />
-                      <div className="text-center">
-                        <p className="font-bold">{cameraStream ? 'Desativar Câmera' : 'Ativar Câmera Local'}</p>
-                        <p className="text-xs opacity-60">Webcam do Computador</p>
-                      </div>
-                    </button>
+                    <div className="space-y-2">
+                      <button 
+                        onClick={cameraStream ? () => cameraStream.getTracks().forEach(t => t.stop()) : startCamera}
+                        className={`w-full p-6 rounded-3xl border transition-all flex flex-col items-center gap-4 ${cameraStream ? 'bg-purple-500/10 border-purple-500 text-purple-500' : 'bg-[#151619] border-white/10 text-white/40 hover:border-white/20'}`}
+                      >
+                        <Camera size={32} />
+                        <div className="text-center">
+                          <p className="font-bold">{cameraStream ? 'Trocar Câmera' : 'Ativar Câmera Local'}</p>
+                          <p className="text-xs opacity-60">Webcam do Computador</p>
+                        </div>
+                      </button>
+                      {cameraStream && (
+                        <button 
+                          onClick={() => {
+                            cameraStream.getTracks().forEach(t => t.stop());
+                            setCameraStream(null);
+                          }}
+                          className="w-full py-2 bg-red-500/10 text-red-500 rounded-xl text-[10px] font-bold uppercase tracking-widest hover:bg-red-500/20 transition-all"
+                        >
+                          Parar Câmera
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
