@@ -72,6 +72,10 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), log]);
       });
 
+      socket.on('server_ready_for_web', () => {
+        startActualRecorder();
+      });
+
       return () => {
         socket.disconnect();
         if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
@@ -262,15 +266,39 @@ export default function App() {
 
   const startWebBroadcast = async () => {
     if (!canvasRef.current) return;
-    
+    setIsLocalStreaming(true);
+    await switchStream('web', 'local');
+    // Request handshake
+    if (socketRef.current) {
+      socketRef.current.emit('web_ready_to_start');
+    }
+  };
+
+  const startActualRecorder = () => {
+    if (!canvasRef.current || !isLocalStreaming) return;
+
     const stream = canvasRef.current.captureStream(25);
-    // Add audio if available
-    if (screenStream?.getAudioTracks().length) stream.addTrack(screenStream.getAudioTracks()[0]);
-    else if (cameraStream?.getAudioTracks().length) stream.addTrack(cameraStream.getAudioTracks()[0]);
+    // Add audio if available, otherwise create a silent track
+    const audioTrack = screenStream?.getAudioTracks()[0] || cameraStream?.getAudioTracks()[0];
+    
+    if (audioTrack) {
+      stream.addTrack(audioTrack);
+    } else {
+      // Create silent audio track if none exists
+      const ctx = new AudioContext();
+      const oscillator = ctx.createOscillator();
+      const dst = ctx.createMediaStreamDestination();
+      oscillator.connect(dst);
+      oscillator.start();
+      const silentTrack = dst.stream.getAudioTracks()[0];
+      silentTrack.enabled = false; // It's silent anyway, but just in case
+      stream.addTrack(silentTrack);
+    }
 
     const recorder = new MediaRecorder(stream, {
-      mimeType: 'video/webm;codecs=vp8',
-      videoBitsPerSecond: 2500000
+      mimeType: 'video/webm;codecs=vp8,opus',
+      videoBitsPerSecond: 2500000,
+      audioBitsPerSecond: 128000
     });
 
     recorder.ondataavailable = (event) => {
@@ -281,8 +309,6 @@ export default function App() {
 
     recorder.start(100); // 100ms chunks
     mediaRecorderRef.current = recorder;
-    setIsLocalStreaming(true);
-    switchStream('web', 'local');
   };
 
   const stopWebBroadcast = () => {
