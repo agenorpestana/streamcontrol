@@ -272,6 +272,11 @@ export default function App() {
 
   const startWebBroadcast = async () => {
     if (!canvasRef.current) return;
+    
+    // Resume AudioContext on user gesture
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    if (ctx.state === 'suspended') await ctx.resume();
+
     setIsLocalStreaming(true);
     await switchStream('web', 'local');
     // Request handshake

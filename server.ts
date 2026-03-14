@@ -64,6 +64,7 @@ async function startServer() {
     socket.on("web_data", (data) => {
       if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
         if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+          // console.log(`Recebido web_data: ${data.byteLength} bytes`);
           ffmpegProcess.stdin.write(Buffer.from(data));
         }
       }
@@ -117,39 +118,43 @@ async function startServer() {
   const startStream = (type: "camera" | "video" | "web", id: number | string) => {
     stopStream(true);
     const db = getDb();
-    let source = "";
     let inputArgs: string[] = [];
+    let mappingArgs: string[] = [];
     
     if (type === "camera") {
       const cam = db.cameras.find((c: any) => c.id === id);
       if (!cam) return;
-      source = cam.rtsp_url;
-      // Added analyzeduration and probesize for faster RTSP detection
-      // Added silent audio source fallback for YouTube compatibility
+      // Input 0: RTSP Camera
+      // Input 1: Silent Audio (Fallback for YouTube)
       inputArgs = [
         "-rtsp_transport", "tcp", 
         "-analyzeduration", "10M", 
         "-probesize", "10M", 
-        "-i", source,
+        "-i", cam.rtsp_url,
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
       ];
+      // Map video from camera and audio from silence
+      mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
     } else if (type === "video") {
       const vid = db.videos.find((v: any) => v.id === id);
       if (!vid) return;
-      source = path.join(process.cwd(), vid.file_path);
+      const videoPath = path.join(process.cwd(), vid.file_path);
       
       if (db.stream_status.loop_video) {
         inputArgs = ["-stream_loop", "-1"];
       }
-      inputArgs.push("-re", "-fflags", "+genpts", "-i", source);
+      inputArgs.push("-re", "-fflags", "+genpts", "-i", videoPath);
+      // Map everything from the video file
+      mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; // ? makes audio optional
     } else if (type === "web") {
-      // Input from stdin (browser stream)
-      // We use -fflags +genpts and -f webm for the input pipe
+      // Input 0: Browser Stream (WebM)
       inputArgs = [
         "-f", "webm", 
         "-fflags", "+genpts",
         "-i", "pipe:0"
       ];
+      // Map video and audio from the browser stream
+      mappingArgs = ["-map", "0:v:0", "-map", "0:a:0"];
     }
 
     const youtubeKey = db.stream_status.youtube_key;
@@ -157,7 +162,7 @@ async function startServer() {
 
     const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
 
-    // FFmpeg Command
+    // FFmpeg Command: Inputs first, then Encoding, then Mapping, then Output
     const args = [
       ...inputArgs,
       "-c:v", "libx264",
@@ -172,21 +177,15 @@ async function startServer() {
       "-c:a", "aac",
       "-b:a", "128k",
       "-ar", "44100",
+      ...mappingArgs,
+      "-f", "flv",
+      "-flvflags", "no_duration_filesize",
+      "-max_muxing_queue_size", "1024",
+      "-threads", "0",
+      rtmpUrl
     ];
 
-    // Mapping logic: 
-    if (type === "video") {
-      args.push("-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
-    } else if (type === "camera") {
-      // For cameras, we force the silent audio to ensure YouTube stays happy
-      args.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100");
-      args.push("-map", "0:v:0", "-map", "1:a:0", "-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
-    } else if (type === "web") {
-      // For web, we assume the browser sends both video and audio (we force it in App.tsx)
-      args.push("-map", "0:v:0", "-map", "0:a:0", "-f", "flv", "-flvflags", "no_duration_filesize", "-max_muxing_queue_size", "1024", "-threads", "0", rtmpUrl);
-    }
-
-    console.log("Iniciando FFmpeg com tipo:", type, "ID:", id);
+    console.log("Iniciando FFmpeg:", args.join(" "));
     ffmpegProcess = spawn("ffmpeg", args);
 
     ffmpegProcess.on("close", (code) => {
