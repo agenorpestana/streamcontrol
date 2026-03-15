@@ -50,6 +50,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
+
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);

@@ -26,6 +26,60 @@ interface StreamStatus {
   loop_video: boolean;
 }
 
+const CameraPreview = ({ camId, className }: { camId: number, className?: string }) => {
+  const token = localStorage.getItem('token');
+  const getSnapshotUrl = () => `/api/cameras/${camId}/snapshot?token=${token}&t=${Date.now()}`;
+  const [src, setSrc] = useState(getSnapshotUrl());
+  const [error, setError] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSrc(getSnapshotUrl());
+    }, 30000); 
+    return () => clearInterval(interval);
+  }, [camId, token]);
+
+  const refresh = () => {
+    setLoading(true);
+    setError(false);
+    setSrc(getSnapshotUrl());
+  };
+
+  return (
+    <div className={`relative bg-black/40 overflow-hidden ${className}`}>
+      {loading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
+          <Activity className="w-4 h-4 text-emerald-500 animate-pulse" />
+        </div>
+      )}
+      
+      {error ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
+          <p className="text-red-400 text-[10px] font-bold uppercase mb-2">Erro de Conexão</p>
+          <button 
+            onClick={refresh}
+            className="p-2 bg-white/5 hover:bg-white/10 rounded-full transition-colors"
+          >
+            <RefreshCw className="w-4 h-4 text-white" />
+          </button>
+        </div>
+      ) : (
+        <img 
+          src={src} 
+          alt="Preview"
+          className="w-full h-full object-cover"
+          onLoad={() => setLoading(false)}
+          onError={() => {
+            setError(true);
+            setLoading(false);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem('token'));
   const [username, setUsername] = useState('');
@@ -65,24 +119,25 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with forced polling for maximum compatibility in restricted environments
+      // Initialize socket with balanced transports and better timeout
       const socket = io({
-        transports: ['polling'],
-        upgrade: false,
-        reconnectionAttempts: 20,
+        transports: ['websocket', 'polling'],
+        reconnectionAttempts: 15,
         reconnectionDelay: 2000,
-        timeout: 60000
+        timeout: 45000,
+        autoConnect: true
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketConnected(true);
-        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado em MODO DE SEGURANÇA (Polling).\n"]);
+        const transportName = socket.io.engine.transport.name;
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conectado (Modo: ${transportName})\n`]);
       });
 
       socket.on('disconnect', (reason) => {
         setSocketConnected(false);
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão interrompida: ${reason}\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão perdida: ${reason}\n`]);
       });
 
       socket.on('connect_error', (err) => {
@@ -404,7 +459,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(200); // Smaller chunks (200ms) for faster initialization
+      recorder.start(1000); // 1 second chunks for better stability
       mediaRecorderRef.current = recorder;
     }, 500);
   };
@@ -495,63 +550,6 @@ export default function App() {
       body: JSON.stringify({ key: ytKey })
     });
     alert('Chave do YouTube Salva');
-  };
-
-  const CameraPreview = ({ camId, className }: { camId: number, className?: string }) => {
-    const token = localStorage.getItem('token');
-    const getSnapshotUrl = () => `/api/cameras/${camId}/snapshot?token=${token}&t=${Date.now()}`;
-    const [src, setSrc] = useState(getSnapshotUrl());
-    const [error, setError] = useState(false);
-    const [loading, setLoading] = useState(true);
-
-    useEffect(() => {
-      const interval = setInterval(() => {
-        setSrc(getSnapshotUrl());
-      }, 30000); // Increased interval to 30s to reduce server load and UI noise
-      return () => clearInterval(interval);
-    }, [camId, token]);
-
-    const refresh = () => {
-      setLoading(true);
-      setError(false);
-      setSrc(getSnapshotUrl());
-    };
-
-    return (
-      <div className={`relative bg-black/40 overflow-hidden ${className}`}>
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10">
-            <Activity className="w-4 h-4 text-emerald-500 animate-pulse" />
-          </div>
-        )}
-        
-        {error ? (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
-            <p className="text-red-400 text-[10px] font-bold uppercase mb-2">Erro de Conexão</p>
-            <button 
-              onClick={refresh}
-              className="text-[8px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded uppercase font-mono"
-            >
-              Tentar Novamente
-            </button>
-          </div>
-        ) : (
-          <img 
-            src={src} 
-            alt="Preview" 
-            className="w-full h-full object-cover"
-            onError={() => {
-              setError(true);
-              setLoading(false);
-            }}
-            onLoad={() => {
-              setError(false);
-              setLoading(false);
-            }}
-          />
-        )}
-      </div>
-    );
   };
 
   const toggleLoop = async () => {
