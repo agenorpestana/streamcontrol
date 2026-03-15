@@ -69,9 +69,11 @@ async function startServer() {
         if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
           try {
             const buffer = Buffer.from(new Uint8Array(data));
-            // Log only every 10th chunk to avoid flooding
-            if (Math.random() < 0.1) {
-              console.log(`[SERVER] Recebido chunk web_data: ${buffer.length} bytes`);
+            // Log only every 50th chunk to avoid flooding but keep visible
+            if (Math.random() < 0.02) {
+              const msg = `[SERVER] Recebido chunk web_data: ${buffer.length} bytes`;
+              console.log(msg);
+              addLog(`${msg}\n`);
             }
             ffmpegProcess.stdin.write(buffer);
           } catch (e) {
@@ -135,7 +137,10 @@ async function startServer() {
     // Limpar logs antigos no servidor e avisar clientes
     ffmpegLogs = [];
     io.emit("ffmpeg_log_clear");
-    addLog(`${msg}\n`);
+    
+    setTimeout(() => {
+      addLog(`${msg}\n`);
+    }, 100);
 
     const db = getDb();
     const youtubeKey = db.stream_status.youtube_key;
@@ -173,13 +178,10 @@ async function startServer() {
       // Map everything from the video file
       mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; // ? makes audio optional
     } else if (type === "web") {
-      // Input 0: Browser Stream (WebM/Matroska)
-      // Matroska is often more robust for streaming via pipes
+      // Input 0: Browser Stream (WebM)
       inputArgs = [
-        "-probesize", "32",
-        "-analyzeduration", "0",
         "-fflags", "+nobuffer+genpts+igndts",
-        "-f", "matroska", 
+        "-f", "webm",
         "-i", "pipe:0",
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
       ];
@@ -223,6 +225,7 @@ async function startServer() {
     try {
       ffmpegProcess = spawn("ffmpeg", args);
       console.log("Processo FFmpeg iniciado com PID:", ffmpegProcess.pid);
+      addLog(`[SERVER] Processo FFmpeg iniciado com PID: ${ffmpegProcess.pid}\n`);
     } catch (e: any) {
       console.error("Erro ao iniciar FFmpeg:", e);
       addLog(`ERRO AO INICIAR FFMPEG: ${e.message}\n`);

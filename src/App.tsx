@@ -39,6 +39,7 @@ export default function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [ffmpegLogs, setFfmpegLogs] = useState<string[]>([]);
   const [showLogs, setShowLogs] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const socketRef = useRef<any>(null);
 
@@ -65,8 +66,25 @@ export default function App() {
       fetchData();
       
       // Initialize socket
-      const socket = io();
+      const socket = io(window.location.origin, {
+        transports: ['websocket', 'polling'],
+        reconnectionAttempts: 5
+      });
       socketRef.current = socket;
+
+      socket.on('connect', () => {
+        setSocketConnected(true);
+        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado ao servidor de sinalização.\n"]);
+      });
+
+      socket.on('disconnect', () => {
+        setSocketConnected(false);
+        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Desconectado do servidor.\n"]);
+      });
+
+      socket.on('connect_error', (err) => {
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de conexão: ${err.message}\n`]);
+      });
 
       socket.on('stream_status', (newStatus: StreamStatus) => {
         setStatus(newStatus);
@@ -340,9 +358,15 @@ export default function App() {
         stream.addTrack(silentTrack);
       }
 
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') 
+        ? 'video/webm;codecs=vp8,opus' 
+        : 'video/webm';
+        
+      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Usando mimeType: ${mimeType}\n`]);
+
       const recorder = new MediaRecorder(stream, {
-        mimeType: 'video/webm;codecs=vp8,opus',
-        videoBitsPerSecond: 3000000, // Slightly higher for better quality
+        mimeType,
+        videoBitsPerSecond: 2500000,
         audioBitsPerSecond: 128000
       });
 
@@ -1203,14 +1227,32 @@ export default function App() {
                       </button>
 
                       {showLogs && (
-                        <div className="bg-black/40 rounded-xl p-3 font-mono text-[10px] h-48 overflow-y-auto space-y-1 border border-white/5">
-                          {ffmpegLogs.length === 0 ? (
-                            <p className="text-white/20">Aguardando logs...</p>
-                          ) : (
-                            ffmpegLogs.map((log, i) => (
-                              <p key={i} className="text-white/60 break-all">{log}</p>
-                            ))
-                          )}
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between px-1">
+                            <div className="flex items-center gap-2">
+                              <div className={`w-2 h-2 rounded-full ${socketConnected ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                              <span className="text-[9px] text-white/40 uppercase tracking-widest">
+                                {socketConnected ? 'Socket Conectado' : 'Socket Desconectado'}
+                              </span>
+                            </div>
+                            {isLocalStreaming && (
+                              <button 
+                                onClick={() => startActualRecorder()}
+                                className="text-[9px] text-emerald-500 hover:underline uppercase tracking-widest"
+                              >
+                                Forçar Início Manual
+                              </button>
+                            )}
+                          </div>
+                          <div className="bg-black/40 rounded-xl p-3 font-mono text-[10px] h-48 overflow-y-auto space-y-1 border border-white/5">
+                            {ffmpegLogs.length === 0 ? (
+                              <p className="text-white/20">Aguardando logs...</p>
+                            ) : (
+                              ffmpegLogs.map((log, i) => (
+                                <p key={i} className="text-white/60 break-all">{log}</p>
+                              ))
+                            )}
+                          </div>
                         </div>
                       )}
 
