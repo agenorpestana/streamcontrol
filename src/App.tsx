@@ -431,7 +431,7 @@ export default function App() {
 
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 4000000, // Increased to 4Mbps for better YouTube quality
+        videoBitsPerSecond: 3000000, // Balanced bitrate for stability
         audioBitsPerSecond: 128000
       });
 
@@ -446,7 +446,8 @@ export default function App() {
                 'Content-Type': 'application/octet-stream',
                 'Authorization': `Bearer ${localStorage.getItem('token')}`
               },
-              body: buffer
+              body: buffer,
+              keepalive: true // Important for streaming chunks
             }).catch(err => console.error("Erro no envio do chunk:", err));
             
             if (Math.random() < 0.1) {
@@ -466,7 +467,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(1000); // 1 second chunks for better stability
+      recorder.start(2000); // 2 second chunks to reduce request frequency
       mediaRecorderRef.current = recorder;
     }, 500);
   };

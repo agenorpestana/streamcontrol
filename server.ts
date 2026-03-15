@@ -227,10 +227,10 @@ async function startServer() {
       "-g", "50",
       "-keyint_min", "50",
       "-sc_threshold", "0", 
-      "-b:v", "3500k", // Increased target bitrate
-      "-minrate", "3000k", // Force a minimum bitrate
-      "-maxrate", "4000k",
-      "-bufsize", "8000k", // Larger buffer for stability
+      "-b:v", "3000k", // Slightly reduced for better stability
+      "-minrate", "2500k",
+      "-maxrate", "3500k",
+      "-bufsize", "6000k",
       "-c:a", "aac",
       "-b:a", "128k",
       "-ar", "44100",
@@ -284,8 +284,10 @@ async function startServer() {
 
     ffmpegProcess.stderr?.on("data", (data) => {
       const log = data.toString();
-      addLog(log);
-      // console.log(`FFmpeg: ${log}`);
+      // Only send important logs or throttle them
+      if (log.includes("Error") || log.includes("warning") || Math.random() < 0.05) {
+        addLog(log);
+      }
     });
 
     db.stream_status.is_streaming = true;
