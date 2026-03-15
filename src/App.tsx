@@ -34,6 +34,11 @@ const CameraPreview = ({ camId, className }: { camId: number, className?: string
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Update src immediately when camId changes
+    setSrc(getSnapshotUrl());
+    setLoading(true);
+    setError(false);
+
     const interval = setInterval(() => {
       setSrc(getSnapshotUrl());
     }, 30000); 
@@ -431,22 +436,24 @@ export default function App() {
       });
 
       recorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && socketRef.current && socketRef.current.connected) {
+        if (event.data.size > 0 && isLocalStreamingRef.current) {
           try {
             const buffer = await event.data.arrayBuffer();
-            // Send as raw binary
-            socketRef.current.emit('web_data', buffer);
+            // Send via HTTP POST instead of Socket.io for better stability
+            fetch('/api/stream/web-data', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/octet-stream',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+              },
+              body: buffer
+            }).catch(err => console.error("Erro no envio do chunk:", err));
             
-            // Log occasionally
             if (Math.random() < 0.1) {
-              setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Enviando chunk de vídeo: ${event.data.size} bytes\n`]);
+              setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Enviando chunk via HTTP: ${event.data.size} bytes\n`]);
             }
           } catch (err) {
             console.error("Erro ao processar chunk de vídeo:", err);
-          }
-        } else if (socketRef.current && !socketRef.current.connected) {
-          if (Math.random() < 0.05) {
-            setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] AVISO: Socket desconectado. Aguardando reconexão...\n"]);
           }
         }
       };

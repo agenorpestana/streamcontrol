@@ -307,6 +307,25 @@ async function startServer() {
     }
   };
 
+  // Binary data endpoint for Web Local streaming
+  app.post("/api/stream/web-data", authenticate, express.raw({ type: 'application/octet-stream', limit: '10mb' }), (req, res) => {
+    if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
+      if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+        try {
+          const buffer = req.body;
+          if (buffer && buffer.length > 0) {
+            ffmpegProcess.stdin.write(buffer);
+            res.status(200).send("OK");
+            return;
+          }
+        } catch (e) {
+          console.error("Erro ao escrever no stdin via POST:", e);
+        }
+      }
+    }
+    res.status(400).send("FFmpeg not ready or wrong source");
+  });
+
   // API Routes
   app.post("/api/login", (req, res) => {
     const { username, password } = req.body;
