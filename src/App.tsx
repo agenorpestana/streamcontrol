@@ -65,25 +65,30 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket
-      const socket = io(window.location.origin, {
-        transports: ['websocket', 'polling'],
-        reconnectionAttempts: 5
+      // Initialize socket with polling first for better compatibility in proxied environments
+      const socket = io({
+        transports: ['polling', 'websocket'],
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1000
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketConnected(true);
-        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado ao servidor de sinalização.\n"]);
+        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado ao servidor (Modo: " + socket.io.engine.transport.name + ")\n"]);
       });
 
-      socket.on('disconnect', () => {
+      socket.on('disconnect', (reason) => {
         setSocketConnected(false);
-        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Desconectado do servidor.\n"]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Desconectado: ${reason}\n`]);
       });
 
       socket.on('connect_error', (err) => {
         setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de conexão: ${err.message}\n`]);
+        // Fallback to polling if websocket fails
+        if (socket.io.opts.transports?.includes('websocket')) {
+          socket.io.opts.transports = ['polling'];
+        }
       });
 
       socket.on('stream_status', (newStatus: StreamStatus) => {
@@ -371,14 +376,22 @@ export default function App() {
       });
 
       recorder.ondataavailable = async (event) => {
-        if (event.data.size > 0 && socketRef.current) {
-          const buffer = await event.data.arrayBuffer();
-          // Send as raw binary
-          socketRef.current.emit('web_data', buffer);
-          
-          // Log occasionally
+        if (event.data.size > 0 && socketRef.current && socketRef.current.connected) {
+          try {
+            const buffer = await event.data.arrayBuffer();
+            // Send as raw binary
+            socketRef.current.emit('web_data', buffer);
+            
+            // Log occasionally
+            if (Math.random() < 0.1) {
+              setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Enviando chunk de vídeo: ${event.data.size} bytes\n`]);
+            }
+          } catch (err) {
+            console.error("Erro ao processar chunk de vídeo:", err);
+          }
+        } else if (socketRef.current && !socketRef.current.connected) {
           if (Math.random() < 0.05) {
-            setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Enviando chunk de vídeo: ${event.data.size} bytes\n`]);
+            setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] AVISO: Socket desconectado. Aguardando reconexão...\n"]);
           }
         }
       };
