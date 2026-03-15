@@ -124,20 +124,20 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with balanced transports and better timeout
+      // Initialize socket with forced polling to eliminate websocket errors in this environment
       const socket = io({
-        transports: ['websocket', 'polling'],
-        reconnectionAttempts: 15,
+        transports: ['polling'],
+        upgrade: false,
+        reconnectionAttempts: 20,
         reconnectionDelay: 2000,
-        timeout: 45000,
+        timeout: 60000,
         autoConnect: true
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketConnected(true);
-        const transportName = socket.io.engine.transport.name;
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conectado (Modo: ${transportName})\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado via Polling (Estável).\n"]);
       });
 
       socket.on('disconnect', (reason) => {
@@ -431,7 +431,7 @@ export default function App() {
 
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 2500000,
+        videoBitsPerSecond: 4000000, // Increased to 4Mbps for better YouTube quality
         audioBitsPerSecond: 128000
       });
 

@@ -227,9 +227,10 @@ async function startServer() {
       "-g", "50",
       "-keyint_min", "50",
       "-sc_threshold", "0", 
-      "-b:v", "2500k",
-      "-maxrate", "2500k",
-      "-bufsize", "5000k",
+      "-b:v", "3500k", // Increased target bitrate
+      "-minrate", "3000k", // Force a minimum bitrate
+      "-maxrate", "4000k",
+      "-bufsize", "8000k", // Larger buffer for stability
       "-c:a", "aac",
       "-b:a", "128k",
       "-ar", "44100",
