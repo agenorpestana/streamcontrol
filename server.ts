@@ -176,7 +176,6 @@ async function startServer() {
       // Input 0: Browser Stream (WebM/Matroska)
       // Matroska is often more robust for streaming via pipes
       inputArgs = [
-        "-loglevel", "debug", // Temporary for deep debugging
         "-probesize", "32",
         "-analyzeduration", "0",
         "-fflags", "+nobuffer+genpts+igndts",
@@ -236,10 +235,15 @@ async function startServer() {
     });
 
     if (type === "web") {
-      console.log("Aguardando 2s para sinalizar prontidão do pipe...");
+      const msgWeb = "[SERVER] Modo WEB detectado. Aguardando 2s para sinalizar prontidão do pipe...";
+      console.log(msgWeb);
+      addLog(`${msgWeb}\n`);
+      
       // Give FFmpeg a moment to initialize the pipe before telling the client to send data
       setTimeout(() => {
-        console.log("Sinalizando server_ready_for_web");
+        const msgReady = "[SERVER] Sinalizando server_ready_for_web para o cliente.";
+        console.log(msgReady);
+        addLog(`${msgReady}\n`);
         io.emit("server_ready_for_web");
       }, 2000);
     }

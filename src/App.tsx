@@ -46,6 +46,13 @@ export default function App() {
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [isLocalStreaming, setIsLocalStreaming] = useState(false);
+  const isLocalStreamingRef = useRef(false);
+  
+  const updateLocalStreaming = (val: boolean) => {
+    setIsLocalStreaming(val);
+    isLocalStreamingRef.current = val;
+  };
+
   const [pipPosition, setPipPosition] = useState<'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'>('bottom-right');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -76,10 +83,12 @@ export default function App() {
         setFfmpegLogs([]);
       });
 
-      socket.on('server_ready_for_web', () => {
-        setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Recebido sinal de prontidão do servidor. Iniciando gravação...\n"]);
-        startActualRecorder();
-      });
+    socket.on('server_ready_for_web', () => {
+      setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Recebido sinal de prontidão do servidor. Iniciando gravação...\n"]);
+      // Use a small timeout to ensure state has propagated if needed, 
+      // though we'll use the ref to be safe.
+      setTimeout(() => startActualRecorder(), 100);
+    });
 
       return () => {
         socket.disconnect();
@@ -292,21 +301,25 @@ export default function App() {
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     if (ctx.state === 'suspended') await ctx.resume();
 
-    setIsLocalStreaming(true);
+    updateLocalStreaming(true);
     await switchStream('web', 'local');
   };
 
   const startActualRecorder = () => {
     setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Executando startActualRecorder...\n"]);
-    if (!canvasRef.current || !isLocalStreaming) {
-      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ABORTADO: canvas=${!!canvasRef.current}, isLocalStreaming=${isLocalStreaming}\n`]);
+    if (!canvasRef.current || !isLocalStreamingRef.current) {
+      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ABORTADO: canvas=${!!canvasRef.current}, isLocalStreaming=${isLocalStreamingRef.current}\n`]);
       return;
     }
 
     // Small extra delay to ensure FFmpeg pipe is fully open
     setTimeout(() => {
-      if (!canvasRef.current || !isLocalStreaming) return;
+      if (!canvasRef.current || !isLocalStreamingRef.current) {
+        setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] ABORTADO no timeout (streaming parado).\n"]);
+        return;
+      }
       
+      setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Capturando stream do canvas...\n"]);
       const stream = canvasRef.current.captureStream(25);
       // Add audio if available, otherwise create a silent track
       const audioTrack = screenStream?.getAudioTracks()[0] || cameraStream?.getAudioTracks()[0];
@@ -364,7 +377,7 @@ export default function App() {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current = null;
     }
-    setIsLocalStreaming(false);
+    updateLocalStreaming(false);
   };
 
   const addCamera = async () => {
