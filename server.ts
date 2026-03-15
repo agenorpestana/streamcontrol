@@ -54,8 +54,13 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
-    cors: { origin: "*" },
-    maxHttpBufferSize: 1e8 // 100MB buffer for video chunks
+    cors: {
+      origin: "*",
+      methods: ["GET", "POST"]
+    },
+    pingTimeout: 60000,
+    pingInterval: 25000,
+    maxHttpBufferSize: 1e7 // 10MB
   });
 
   io.on("connection", (socket) => {
@@ -69,9 +74,11 @@ async function startServer() {
       if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
         if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
           try {
-            const buffer = Buffer.from(new Uint8Array(data));
-            // Log only every 50th chunk to avoid flooding but keep visible
-            if (Math.random() < 0.02) {
+            // Socket.io handles binary data automatically
+            const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+            
+            // Log only every 100th chunk to avoid flooding but keep visible
+            if (Math.random() < 0.01) {
               const msg = `[SERVER] Recebido chunk web_data: ${buffer.length} bytes`;
               console.log(msg);
               addLog(`${msg}\n`);

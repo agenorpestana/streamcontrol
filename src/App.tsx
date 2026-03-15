@@ -65,26 +65,28 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with forced polling for maximum compatibility
+      // Initialize socket with balanced transports
       const socket = io({
-        transports: ['polling'], // Force polling to avoid websocket upgrade failures
-        reconnectionAttempts: 20,
+        transports: ['websocket', 'polling'],
+        reconnectionAttempts: 10,
         reconnectionDelay: 2000,
-        timeout: 30000
+        timeout: 20000
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketConnected(true);
-        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado em MODO DE COMPATIBILIDADE.\n"]);
+        const transportName = socket.io.engine.transport.name;
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conectado (Modo: ${transportName})\n`]);
       });
 
       socket.on('disconnect', (reason) => {
         setSocketConnected(false);
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão perdida: ${reason}. Tentando reconectar...\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão perdida: ${reason}\n`]);
       });
 
       socket.on('connect_error', (err) => {
+        console.error("Socket connection error:", err);
         setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de rede: ${err.message}\n`]);
       });
 
