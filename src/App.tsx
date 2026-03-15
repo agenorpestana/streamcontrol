@@ -65,25 +65,24 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with balanced transports and better timeout
+      // Initialize socket with forced polling for maximum compatibility in restricted environments
       const socket = io({
-        transports: ['websocket', 'polling'],
-        reconnectionAttempts: 10,
+        transports: ['polling'],
+        upgrade: false,
+        reconnectionAttempts: 20,
         reconnectionDelay: 2000,
-        timeout: 45000,
-        autoConnect: true
+        timeout: 60000
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketConnected(true);
-        const transportName = socket.io.engine.transport.name;
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conectado (Modo: ${transportName})\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado em MODO DE SEGURANÇA (Polling).\n"]);
       });
 
       socket.on('disconnect', (reason) => {
         setSocketConnected(false);
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão perdida: ${reason}\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão interrompida: ${reason}\n`]);
       });
 
       socket.on('connect_error', (err) => {
@@ -93,7 +92,8 @@ export default function App() {
 
       socket.on('stream_status', (newStatus: StreamStatus) => {
         setStatus(newStatus);
-        if (!newStatus.is_streaming && isLocalStreaming) {
+        // Use ref to avoid stale closure
+        if (!newStatus.is_streaming && isLocalStreamingRef.current) {
           stopWebBroadcast();
         }
       });
@@ -507,7 +507,7 @@ export default function App() {
     useEffect(() => {
       const interval = setInterval(() => {
         setSrc(getSnapshotUrl());
-      }, 10000); // Increased interval to 10s to give more time for FFmpeg
+      }, 30000); // Increased interval to 30s to reduce server load and UI noise
       return () => clearInterval(interval);
     }, [camId, token]);
 

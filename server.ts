@@ -71,7 +71,7 @@ async function startServer() {
   });
 
   io.on("connection", (socket) => {
-    console.log("Cliente conectado:", socket.id);
+    console.log("Cliente conectado:", socket.id, "Transporte:", socket.conn.transport.name);
     socket.emit("stream_status", getDb().stream_status);
     
     // Enviar logs existentes para o novo cliente
