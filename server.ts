@@ -12,6 +12,8 @@ import multer from "multer";
 
 // Mock Database for Preview (In production, use MySQL)
 const DB_FILE = path.join(process.cwd(), "data.json");
+let dbCache: any = null;
+
 const initDb = () => {
   if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify({
@@ -27,11 +29,22 @@ const initDb = () => {
       stream_status: { current_source_type: "none", current_source_id: null, is_streaming: false, youtube_key: "", loop_video: false }
     }, null, 2));
   }
+  dbCache = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
 };
 initDb();
 
-const getDb = () => JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
-const saveDb = (data: any) => fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+const getDb = () => {
+  if (!dbCache) initDb();
+  return dbCache;
+};
+
+const saveDb = (data: any) => {
+  dbCache = data;
+  // Async write to not block
+  fs.writeFile(DB_FILE, JSON.stringify(data, null, 2), (err) => {
+    if (err) console.error("Erro ao salvar DB:", err);
+  });
+};
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(process.cwd(), "uploads");
@@ -65,10 +78,12 @@ async function startServer() {
       origin: "*",
       methods: ["GET", "POST"]
     },
-    pingTimeout: 120000, // 2 minutes tolerance
-    pingInterval: 30000, // 30 seconds heartbeat
-    maxHttpBufferSize: 1e8, // 100MB
-    connectTimeout: 45000
+    transports: ['websocket', 'polling'],
+    allowUpgrades: true,
+    pingTimeout: 30000,
+    pingInterval: 10000,
+    maxHttpBufferSize: 1e8,
+    connectTimeout: 30000
   });
 
   // Server-side connection error logging
@@ -150,151 +165,141 @@ async function startServer() {
     }
   };
 
-  const startStream = (type: "camera" | "video" | "web", id: number | string) => {
+  let isStarting = false;
+  const startStream = async (type: "camera" | "video" | "web", id: number | string) => {
+    if (isStarting) return;
+    isStarting = true;
     const msg = `[SERVER] startStream chamado: type=${type}, id=${id}`;
     console.log(msg);
     
-    stopStream(true);
-    
-    // Limpar logs antigos no servidor e avisar clientes
-    ffmpegLogs = [];
-    io.emit("ffmpeg_log_clear");
-    
-    setTimeout(() => {
-      addLog(`${msg}\n`);
-    }, 100);
-
-    const db = getDb();
-    const youtubeKey = db.stream_status.youtube_key;
-    if (!youtubeKey) {
-      addLog("ERRO: Chave do YouTube não configurada nas configurações.\n");
-      return;
-    }
-
-    let inputArgs: string[] = [];
-    let mappingArgs: string[] = [];
-    
-    if (type === "camera") {
-      const cam = db.cameras.find((c: any) => c.id === id);
-      if (!cam) return;
-      // Input 0: RTSP Camera
-      // Input 1: Silent Audio (Fallback for YouTube)
-      inputArgs = [
-        "-rtsp_transport", "tcp", 
-        "-analyzeduration", "10M", 
-        "-probesize", "10M", 
-        "-i", cam.rtsp_url,
-        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
-      ];
-      // Map video from camera and audio from silence
-      mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
-    } else if (type === "video") {
-      const vid = db.videos.find((v: any) => v.id === id);
-      if (!vid) return;
-      const videoPath = path.join(process.cwd(), vid.file_path);
-      
-      if (db.stream_status.loop_video) {
-        inputArgs = ["-stream_loop", "-1"];
-      }
-      inputArgs.push("-re", "-fflags", "+genpts", "-i", videoPath);
-      // Map everything from the video file
-      mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; // ? makes audio optional
-    } else if (type === "web") {
-      // Input 0: Browser Stream (WebM)
-      inputArgs = [
-        "-fflags", "+nobuffer+genpts+igndts",
-        "-f", "webm",
-        "-i", "pipe:0",
-        "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
-      ];
-      // Map video from browser (input 0) and audio from silence (input 1)
-      mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
-    }
-
-    // RTMP is generally more compatible for direct pipe streaming
-    const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
-
-    // FFmpeg Command: Inputs first, then Encoding, then Mapping, then Output
-    // Optimized for YouTube: Constant GOP (2s), High Profile, CBR-like bitrate
-    const args = [
-      ...inputArgs,
-      "-c:v", "libx264",
-      "-preset", "veryfast",
-      "-profile:v", "high",
-      "-level", "4.1",
-      "-pix_fmt", "yuv420p",
-      "-r", "25",
-      "-g", "50",
-      "-keyint_min", "50",
-      "-sc_threshold", "0", 
-      "-b:v", "3000k", // Slightly reduced for better stability
-      "-minrate", "2500k",
-      "-maxrate", "3500k",
-      "-bufsize", "6000k",
-      "-c:a", "aac",
-      "-b:a", "128k",
-      "-ar", "44100",
-      ...mappingArgs,
-      "-f", "flv",
-      "-flvflags", "no_duration_filesize",
-      "-max_muxing_queue_size", "1024",
-      "-threads", "0",
-      rtmpUrl
-    ];
-
-    console.log("Iniciando FFmpeg:", args.join(" "));
-    addLog(`Comando: ffmpeg ${args.join(" ")}\n`);
-
     try {
-      ffmpegProcess = spawn("ffmpeg", args);
-      console.log("Processo FFmpeg iniciado com PID:", ffmpegProcess.pid);
-      addLog(`[SERVER] Processo FFmpeg iniciado com PID: ${ffmpegProcess.pid}\n`);
-    } catch (e: any) {
-      console.error("Erro ao iniciar FFmpeg:", e);
-      addLog(`ERRO AO INICIAR FFMPEG: ${e.message}\n`);
-      return;
-    }
-
-    ffmpegProcess.on("error", (err) => {
-      console.error("Erro no processo FFmpeg:", err);
-      addLog(`ERRO NO PROCESSO FFMPEG: ${err.message}\n`);
-    });
-
-    if (type === "web") {
-      const msgWeb = "[SERVER] Modo WEB detectado. Aguardando 2s para sinalizar prontidão do pipe...";
-      console.log(msgWeb);
-      addLog(`${msgWeb}\n`);
+      stopStream(true);
       
-      // Give FFmpeg a moment to initialize the pipe before telling the client to send data
+      // Limpar logs antigos no servidor e avisar clientes
+      ffmpegLogs = [];
+      io.emit("ffmpeg_log_clear");
+      
       setTimeout(() => {
-        const msgReady = "[SERVER] Sinalizando server_ready_for_web para o cliente.";
-        console.log(msgReady);
-        addLog(`${msgReady}\n`);
-        io.emit("server_ready_for_web");
-      }, 2000);
+        addLog(`${msg}\n`);
+      }, 100);
+
+      const db = getDb();
+      const youtubeKey = db.stream_status.youtube_key;
+      if (!youtubeKey) {
+        addLog("ERRO: Chave do YouTube não configurada nas configurações.\n");
+        return;
+      }
+
+      let inputArgs: string[] = [];
+      let mappingArgs: string[] = [];
+      
+      if (type === "camera") {
+        const cam = db.cameras.find((c: any) => c.id === id);
+        if (!cam) return;
+        inputArgs = [
+          "-rtsp_transport", "tcp", 
+          "-analyzeduration", "10M", 
+          "-probesize", "10M", 
+          "-i", cam.rtsp_url,
+          "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+        ];
+        mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
+      } else if (type === "video") {
+        const vid = db.videos.find((v: any) => v.id === id);
+        if (!vid) return;
+        const videoPath = path.join(process.cwd(), vid.file_path);
+        
+        if (db.stream_status.loop_video) {
+          inputArgs = ["-stream_loop", "-1"];
+        }
+        inputArgs.push("-re", "-fflags", "+genpts", "-i", videoPath);
+        mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"];
+      } else if (type === "web") {
+        inputArgs = [
+          "-fflags", "+nobuffer+genpts+igndts",
+          "-probesize", "5M",
+          "-analyzeduration", "5M",
+          "-f", "webm",
+          "-i", "pipe:0",
+          "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+        ];
+        mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
+      }
+
+      const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
+      const args = [
+        ...inputArgs,
+        "-c:v", "libx264",
+        "-preset", "veryfast",
+        "-profile:v", "high",
+        "-level", "4.1",
+        "-pix_fmt", "yuv420p",
+        "-r", "25",
+        "-g", "50",
+        "-keyint_min", "50",
+        "-sc_threshold", "0", 
+        "-b:v", "3000k",
+        "-minrate", "2500k",
+        "-maxrate", "3500k",
+        "-bufsize", "6000k",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ar", "44100",
+        ...mappingArgs,
+        "-f", "flv",
+        "-flvflags", "no_duration_filesize",
+        "-max_muxing_queue_size", "1024",
+        "-threads", "0",
+        rtmpUrl
+      ];
+
+      console.log("Iniciando FFmpeg:", args.join(" "));
+      addLog(`Comando: ffmpeg ${args.join(" ")}\n`);
+
+      try {
+        ffmpegProcess = spawn("ffmpeg", args);
+        console.log("Processo FFmpeg iniciado com PID:", ffmpegProcess.pid);
+        addLog(`[SERVER] Processo FFmpeg iniciado com PID: ${ffmpegProcess.pid}\n`);
+      } catch (e: any) {
+        console.error("Erro ao iniciar FFmpeg:", e);
+        addLog(`ERRO AO INICIAR FFMPEG: ${e.message}\n`);
+        return;
+      }
+
+      ffmpegProcess.on("error", (err) => {
+        console.error("Erro no processo FFmpeg:", err);
+        addLog(`ERRO NO PROCESSO FFMPEG: ${err.message}\n`);
+      });
+
+      if (type === "web") {
+        setTimeout(() => {
+          io.emit("server_ready_for_web");
+        }, 2000);
+      }
+
+      ffmpegProcess.on("close", (code) => {
+        console.log(`Processo FFmpeg encerrado com código ${code}`);
+        addLog(`FFmpeg encerrado com código ${code}\n`);
+        if (ffmpegProcess) {
+          stopStream();
+        }
+      });
+
+      ffmpegProcess.stderr?.on("data", (data) => {
+        const log = data.toString();
+        if (log.includes("Error") || log.includes("warning") || Math.random() < 0.05) {
+          addLog(log);
+        }
+      });
+
+      db.stream_status.is_streaming = true;
+      db.stream_status.current_source_type = type;
+      db.stream_status.current_source_id = id as any;
+      saveDb(db);
+      io.emit("stream_status", db.stream_status);
+    } finally {
+      isStarting = false;
     }
-
-    ffmpegProcess.on("close", (code) => {
-      console.log(`Processo FFmpeg encerrado com código ${code}`);
-      addLog(`FFmpeg encerrado com código ${code}\n`);
-      if (ffmpegProcess) {
-        stopStream();
-      }
-    });
-
-    ffmpegProcess.stderr?.on("data", (data) => {
-      const log = data.toString();
-      // Only send important logs or throttle them
-      if (log.includes("Error") || log.includes("warning") || Math.random() < 0.05) {
-        addLog(log);
-      }
-    });
-
-    db.stream_status.is_streaming = true;
-    db.stream_status.current_source_type = type;
-    db.stream_status.current_source_id = id as any;
-    saveDb(db);
-    io.emit("stream_status", db.stream_status);
   };
 
   // Auth Middleware
@@ -311,22 +316,39 @@ async function startServer() {
   };
 
   // Binary data endpoint for Web Local streaming
-  app.post("/api/stream/web-data", authenticate, express.raw({ type: 'application/octet-stream', limit: '10mb' }), (req, res) => {
-    if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
-      if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+  app.post("/api/stream/web-data", authenticate, express.raw({ type: 'application/octet-stream', limit: '20mb' }), (req, res) => {
+    const db = getDb();
+    const isAlive = ffmpegProcess && !ffmpegProcess.killed && ffmpegProcess.exitCode === null;
+    
+    if (isAlive && db.stream_status.current_source_type === "web") {
+      if (ffmpegProcess!.stdin && ffmpegProcess!.stdin.writable) {
         try {
           const buffer = req.body;
           if (buffer && buffer.length > 0) {
-            ffmpegProcess.stdin.write(buffer);
-            res.status(200).send("OK");
+            ffmpegProcess!.stdin.write(buffer, (err) => {
+              if (err) {
+                console.error("Erro ao escrever no stdin do FFmpeg:", err);
+                res.status(500).send("Error writing to FFmpeg");
+              } else {
+                res.status(200).send("OK");
+              }
+            });
             return;
           }
         } catch (e) {
-          console.error("Erro ao escrever no stdin via POST:", e);
+          console.error("Erro fatal ao escrever no stdin via POST:", e);
+          res.status(500).send("Fatal error");
+          return;
         }
+      } else {
+        console.warn("[SERVER] FFmpeg stdin não está pronto para escrita.");
+        res.status(503).send("FFmpeg stdin not ready");
+        return;
       }
+    } else {
+      res.status(400).send("FFmpeg not running or not in web mode");
+      return;
     }
-    res.status(400).send("FFmpeg not ready or wrong source");
   });
 
   // API Routes
@@ -468,9 +490,9 @@ async function startServer() {
     res.json({ success: true });
   });
 
-  app.post("/api/stream/switch", authenticate, (req, res) => {
+  app.post("/api/stream/switch", authenticate, async (req, res) => {
     const { type, id } = req.body;
-    startStream(type, id);
+    await startStream(type, id);
     res.json({ success: true });
   });
 

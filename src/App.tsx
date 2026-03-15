@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat } from 'lucide-react';
+import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat, RefreshCw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io } from 'socket.io-client';
 
@@ -124,20 +124,21 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with forced polling to eliminate websocket errors in this environment
+      // Initialize socket with balanced transports and better timeout
       const socket = io({
-        transports: ['polling'],
-        upgrade: false,
+        transports: ['websocket', 'polling'],
         reconnectionAttempts: 20,
-        reconnectionDelay: 2000,
-        timeout: 60000,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
         autoConnect: true
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketConnected(true);
-        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado via Polling (Estável).\n"]);
+        const transport = socket.io.engine.transport.name;
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conectado (Transporte: ${transport})\n`]);
       });
 
       socket.on('disconnect', (reason) => {
@@ -146,8 +147,11 @@ export default function App() {
       });
 
       socket.on('connect_error', (err) => {
-        console.error("Socket connection error:", err);
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de rede: ${err.message}\n`]);
+        // Only log critical errors to avoid flooding
+        if (err.message !== 'xhr poll error' && err.message !== 'websocket error') {
+          console.error("Socket connection error:", err);
+          setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de rede: ${err.message}\n`]);
+        }
       });
 
       socket.on('stream_status', (newStatus: StreamStatus) => {
@@ -296,7 +300,11 @@ export default function App() {
     setIsLoggedIn(false);
   };
 
+  const [isSwitching, setIsSwitching] = useState(false);
+
   const switchStream = async (type: 'camera' | 'video' | 'web', id: number | string) => {
+    if (isSwitching) return;
+    setIsSwitching(true);
     const token = localStorage.getItem('token');
     setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Solicitando troca de stream para: ${type} (${id})...\n`]);
     
@@ -320,9 +328,13 @@ export default function App() {
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] API respondeu com sucesso.\n`]);
     } catch (error: any) {
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NA TROCA DE STREAM: ${error.message}\n`]);
-      // Revert optimistic update if possible or just let fetchData handle it
+    } finally {
+      // Pequeno delay para o servidor salvar o DB antes de buscarmos
+      setTimeout(() => {
+        fetchData();
+        setIsSwitching(false);
+      }, 1000);
     }
-    fetchData();
   };
 
   const stopStream = async () => {
@@ -390,6 +402,16 @@ export default function App() {
 
   const startActualRecorder = () => {
     setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Executando startActualRecorder...\n"]);
+    
+    // Stop any existing recorder first
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {
+        console.error("Erro ao parar recorder anterior:", e);
+      }
+    }
+
     if (!canvasRef.current || !isLocalStreamingRef.current) {
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ABORTADO: canvas=${!!canvasRef.current}, isLocalStreaming=${isLocalStreamingRef.current}\n`]);
       return;
@@ -431,31 +453,36 @@ export default function App() {
 
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 3000000, // Balanced bitrate for stability
+        videoBitsPerSecond: 1500000, // Reduced for better stability
         audioBitsPerSecond: 128000
       });
 
       recorder.ondataavailable = async (event) => {
         if (event.data.size > 0 && isLocalStreamingRef.current) {
-          try {
-            const buffer = await event.data.arrayBuffer();
-            // Send via HTTP POST instead of Socket.io for better stability
-            fetch('/api/stream/web-data', {
-              method: 'POST',
-              headers: { 
-                'Content-Type': 'application/octet-stream',
-                'Authorization': `Bearer ${localStorage.getItem('token')}`
-              },
-              body: buffer,
-              keepalive: true // Important for streaming chunks
-            }).catch(err => console.error("Erro no envio do chunk:", err));
-            
-            if (Math.random() < 0.1) {
-              setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Enviando chunk via HTTP: ${event.data.size} bytes\n`]);
+          const token = localStorage.getItem('token');
+          const sendChunk = async (retryCount = 0) => {
+            try {
+              const buffer = await event.data.arrayBuffer();
+              const res = await fetch('/api/stream/web-data', {
+                method: 'POST',
+                headers: { 
+                  'Content-Type': 'application/octet-stream',
+                  'Authorization': `Bearer ${token}`
+                },
+                body: buffer,
+                keepalive: true
+              });
+              if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            } catch (err: any) {
+              console.error(`[CLIENTE] Erro ao enviar chunk (tentativa ${retryCount + 1}):`, err);
+              if (retryCount < 2 && isLocalStreamingRef.current) {
+                setTimeout(() => sendChunk(retryCount + 1), 500);
+              } else {
+                setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de rede: ${err.message}\n`]);
+              }
             }
-          } catch (err) {
-            console.error("Erro ao processar chunk de vídeo:", err);
-          }
+          };
+          sendChunk();
         }
       };
 
