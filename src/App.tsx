@@ -65,30 +65,27 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with polling first for better compatibility in proxied environments
+      // Initialize socket with forced polling for maximum compatibility
       const socket = io({
-        transports: ['polling', 'websocket'],
-        reconnectionAttempts: 10,
-        reconnectionDelay: 1000
+        transports: ['polling'], // Force polling to avoid websocket upgrade failures
+        reconnectionAttempts: 20,
+        reconnectionDelay: 2000,
+        timeout: 30000
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketConnected(true);
-        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado ao servidor (Modo: " + socket.io.engine.transport.name + ")\n"]);
+        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado em MODO DE COMPATIBILIDADE.\n"]);
       });
 
       socket.on('disconnect', (reason) => {
         setSocketConnected(false);
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Desconectado: ${reason}\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão perdida: ${reason}. Tentando reconectar...\n`]);
       });
 
       socket.on('connect_error', (err) => {
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de conexão: ${err.message}\n`]);
-        // Fallback to polling if websocket fails
-        if (socket.io.opts.transports?.includes('websocket')) {
-          socket.io.opts.transports = ['polling'];
-        }
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de rede: ${err.message}\n`]);
       });
 
       socket.on('stream_status', (newStatus: StreamStatus) => {
@@ -1247,6 +1244,14 @@ export default function App() {
                               <span className="text-[9px] text-white/40 uppercase tracking-widest">
                                 {socketConnected ? 'Socket Conectado' : 'Socket Desconectado'}
                               </span>
+                              {!socketConnected && (
+                                <button 
+                                  onClick={() => socketRef.current?.connect()}
+                                  className="text-[9px] text-emerald-500 hover:underline uppercase tracking-widest ml-2"
+                                >
+                                  Reconectar
+                                </button>
+                              )}
                             </div>
                             {isLocalStreaming && (
                               <button 

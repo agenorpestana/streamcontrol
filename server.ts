@@ -54,7 +54,8 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
-    cors: { origin: "*" }
+    cors: { origin: "*" },
+    maxHttpBufferSize: 1e8 // 100MB buffer for video chunks
   });
 
   io.on("connection", (socket) => {
