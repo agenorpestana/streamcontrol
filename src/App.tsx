@@ -65,24 +65,25 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with forced polling for maximum compatibility
-      const socket = io(window.location.origin, {
-        transports: ['polling'],
-        upgrade: false,
-        reconnectionAttempts: 15,
+      // Initialize socket with balanced transports and better timeout
+      const socket = io({
+        transports: ['websocket', 'polling'],
+        reconnectionAttempts: 10,
         reconnectionDelay: 2000,
-        timeout: 30000
+        timeout: 45000,
+        autoConnect: true
       });
       socketRef.current = socket;
 
       socket.on('connect', () => {
         setSocketConnected(true);
-        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Conectado em MODO DE SEGURANÇA (Polling).\n"]);
+        const transportName = socket.io.engine.transport.name;
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conectado (Modo: ${transportName})\n`]);
       });
 
       socket.on('disconnect', (reason) => {
         setSocketConnected(false);
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão interrompida: ${reason}\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Conexão perdida: ${reason}\n`]);
       });
 
       socket.on('connect_error', (err) => {

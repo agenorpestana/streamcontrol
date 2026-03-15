@@ -58,9 +58,16 @@ async function startServer() {
       origin: "*",
       methods: ["GET", "POST"]
     },
-    pingTimeout: 60000,
-    pingInterval: 25000,
-    maxHttpBufferSize: 1e7 // 10MB
+    pingTimeout: 120000, // 2 minutes tolerance
+    pingInterval: 30000, // 30 seconds heartbeat
+    maxHttpBufferSize: 1e8, // 100MB
+    connectTimeout: 45000
+  });
+
+  // Server-side connection error logging
+  io.on("connection_error", (err) => {
+    console.error("Erro de conexão Socket.io no servidor:", err.message);
+    console.error("Contexto do erro:", err.context);
   });
 
   io.on("connection", (socket) => {
