@@ -86,6 +86,16 @@ async function startServer() {
     connectTimeout: 60000
   });
 
+  // FFmpeg Management
+  let ffmpegProcess: ChildProcess | null = null;
+  let ffmpegLogs: string[] = [];
+
+  const addLog = (data: string) => {
+    ffmpegLogs.push(data);
+    if (ffmpegLogs.length > 100) ffmpegLogs.shift();
+    io.emit("ffmpeg_log", data);
+  };
+
   // Server-side connection error logging
   io.on("connection_error", (err) => {
     console.error("Erro de conexão Socket.io no servidor:", err.message);
@@ -140,20 +150,11 @@ async function startServer() {
   app.use(express.json());
   app.use("/uploads", express.static(uploadsDir));
 
-  // FFmpeg Management
-  let ffmpegProcess: ChildProcess | null = null;
-  let ffmpegLogs: string[] = [];
-
-  const addLog = (data: string) => {
-    ffmpegLogs.push(data);
-    if (ffmpegLogs.length > 100) ffmpegLogs.shift();
-    io.emit("ffmpeg_log", data);
-  };
-
   const stopStream = (isSwitching = false) => {
     console.log(`[SERVER] stopStream chamado (isSwitching=${isSwitching})`);
     if (ffmpegProcess) {
       ffmpegProcess.removeAllListeners("close");
+      ffmpegProcess.removeAllListeners("exit");
       ffmpegProcess.kill("SIGKILL");
       ffmpegProcess = null;
     }
