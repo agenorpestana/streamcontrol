@@ -234,18 +234,15 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with websocket only for better stability in this environment
+      // Initialize socket with standard settings for better compatibility
       const socket = io(window.location.origin, {
         auth: { token: localStorage.getItem('token') },
         transports: ['polling', 'websocket'],
-        upgrade: true,
-        rememberUpgrade: true,
-        reconnectionAttempts: 50,
-        reconnectionDelay: 2000,
-        reconnectionDelayMax: 10000,
-        timeout: 60000,
-        autoConnect: true,
-        forceNew: true
+        reconnection: true,
+        reconnectionAttempts: Infinity,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        timeout: 20000,
       });
       socketRef.current = socket;
 
@@ -610,7 +607,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(1000); // 1 second chunks - better balance between latency and overhead
+      recorder.start(2000); // 2 second chunks - even less overhead for the server
       mediaRecorderRef.current = recorder;
     }, 500);
   };

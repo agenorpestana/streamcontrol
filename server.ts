@@ -222,14 +222,13 @@ async function startServer() {
         inputArgs = [
           "-use_wallclock_as_timestamps", "1",
           "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
-          "-thread_queue_size", "8192",
-          "-probesize", "5M",
-          "-analyzeduration", "5M",
-          "-max_delay", "500000",
+          "-thread_queue_size", "1024",
           "-f", "webm",
           "-i", "pipe:0"
         ];
-        // Explicitly map video and audio, making audio optional
+        // Try to copy video if it's already H264, otherwise transcode with ultrafast
+        // Since we can't easily detect input codec here, we'll stick to transcoding 
+        // but with even more aggressive settings for low CPU usage.
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; 
       }
 
@@ -239,17 +238,16 @@ async function startServer() {
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
-        "-profile:v", "high",
-        "-level", "4.1",
+        "-profile:v", "baseline", // Baseline is lighter than high
+        "-level", "3.0",
         "-pix_fmt", "yuv420p",
         "-r", "25",
         "-g", "50",
         "-keyint_min", "50",
         "-sc_threshold", "0", 
         "-b:v", "2500k",
-        "-minrate", "2000k",
-        "-maxrate", "3000k",
-        "-bufsize", "6000k",
+        "-maxrate", "2500k",
+        "-bufsize", "5000k",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
@@ -257,7 +255,7 @@ async function startServer() {
         "-f", "flv",
         "-flvflags", "no_duration_filesize",
         "-max_muxing_queue_size", "1024",
-        "-threads", "0",
+        "-threads", "1", // Limit to 1 thread to avoid CPU spikes
         rtmpUrl
       ];
 
@@ -346,7 +344,8 @@ async function startServer() {
         try {
           const buffer = req.body;
           if (buffer && buffer.length > 0) {
-            const success = ffmpegProcess!.stdin.write(buffer, (err) => {
+            // Check for backpressure
+            const canWrite = ffmpegProcess!.stdin.write(buffer, (err) => {
               if (err) {
                 console.error("Erro ao escrever no stdin do FFmpeg:", err);
                 if (!res.headersSent) res.status(500).send(`Error writing to FFmpeg: ${err.message}`);
@@ -354,12 +353,12 @@ async function startServer() {
                 if (!res.headersSent) res.status(200).send("OK");
               }
             });
-            if (!success) {
-              console.warn("[SERVER] Stdin buffer cheio (POST), aguardando drain...");
+            
+            if (!canWrite) {
+              console.warn("[SERVER] Backpressure detectado no stdin do FFmpeg");
             }
             return;
           } else {
-            console.warn("[SERVER] Chunk vazio recebido.");
             res.status(400).send("Empty chunk");
           }
         } catch (e: any) {
@@ -368,12 +367,10 @@ async function startServer() {
           return;
         }
       } else {
-        console.warn("[SERVER] FFmpeg stdin não está pronto para escrita.");
         res.status(503).send("FFmpeg stdin not ready or pipe closed");
         return;
       }
     } else {
-      console.warn(`[SERVER] Rejeitando chunk: FFmpeg vivo=${isAlive}, tipo=${db.stream_status.current_source_type}`);
       res.status(400).send(`FFmpeg not running or not in web mode (Alive: ${isAlive})`);
       return;
     }
