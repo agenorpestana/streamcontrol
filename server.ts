@@ -78,12 +78,12 @@ async function startServer() {
       origin: "*",
       methods: ["GET", "POST"]
     },
-    transports: ['websocket', 'polling'],
-    allowUpgrades: true,
-    pingTimeout: 30000,
-    pingInterval: 10000,
+    transports: ['websocket'],
+    allowUpgrades: false,
+    pingTimeout: 60000,
+    pingInterval: 25000,
     maxHttpBufferSize: 1e8,
-    connectTimeout: 30000
+    connectTimeout: 60000
   });
 
   // Server-side connection error logging
@@ -100,22 +100,25 @@ async function startServer() {
     ffmpegLogs.forEach(log => socket.emit("ffmpeg_log", log));
 
     socket.on("web_data", (data) => {
-      if (ffmpegProcess && getDb().stream_status.current_source_type === "web") {
-        if (ffmpegProcess.stdin && ffmpegProcess.stdin.writable) {
+      const db = getDb();
+      const isAlive = ffmpegProcess && !ffmpegProcess.killed && ffmpegProcess.exitCode === null;
+      
+      if (isAlive && db.stream_status.current_source_type === "web") {
+        if (ffmpegProcess!.stdin && ffmpegProcess!.stdin.writable) {
           try {
-            // Socket.io handles binary data automatically
             const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
             
-            // Log only every 100th chunk to avoid flooding but keep visible
-            if (Math.random() < 0.01) {
-              const msg = `[SERVER] Recebido chunk web_data: ${buffer.length} bytes`;
+            if (Math.random() < 0.05) {
+              const msg = `[SERVER] Recebido chunk web_data via Socket: ${buffer.length} bytes`;
               console.log(msg);
-              addLog(`${msg}\n`);
+              // addLog(`${msg}\n`); // Don't flood the UI logs with every chunk
             }
-            ffmpegProcess.stdin.write(buffer);
+            
+            ffmpegProcess!.stdin.write(buffer, (err) => {
+              if (err) console.error("Erro ao escrever no stdin do FFmpeg (Socket):", err);
+            });
           } catch (e) {
-            console.error("Erro ao escrever no stdin do FFmpeg:", e);
-            addLog(`ERRO STDIN: ${e}\n`);
+            console.error("Erro ao processar chunk web_data (Socket):", e);
           }
         }
       }
@@ -217,8 +220,9 @@ async function startServer() {
       } else if (type === "web") {
         inputArgs = [
           "-fflags", "+nobuffer+genpts+igndts",
-          "-probesize", "5M",
-          "-analyzeduration", "5M",
+          "-thread_queue_size", "1024",
+          "-probesize", "2M",
+          "-analyzeduration", "2M",
           "-f", "webm",
           "-i", "pipe:0",
           "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
@@ -320,6 +324,8 @@ async function startServer() {
     const db = getDb();
     const isAlive = ffmpegProcess && !ffmpegProcess.killed && ffmpegProcess.exitCode === null;
     
+    console.log(`[SERVER] Recebido chunk de dados web: ${req.body?.length || 0} bytes. FFmpeg vivo: ${isAlive}`);
+
     if (isAlive && db.stream_status.current_source_type === "web") {
       if (ffmpegProcess!.stdin && ffmpegProcess!.stdin.writable) {
         try {
@@ -328,16 +334,19 @@ async function startServer() {
             ffmpegProcess!.stdin.write(buffer, (err) => {
               if (err) {
                 console.error("Erro ao escrever no stdin do FFmpeg:", err);
-                res.status(500).send("Error writing to FFmpeg");
+                if (!res.headersSent) res.status(500).send("Error writing to FFmpeg");
               } else {
-                res.status(200).send("OK");
+                if (!res.headersSent) res.status(200).send("OK");
               }
             });
             return;
+          } else {
+            console.warn("[SERVER] Chunk vazio recebido.");
+            res.status(400).send("Empty chunk");
           }
         } catch (e) {
           console.error("Erro fatal ao escrever no stdin via POST:", e);
-          res.status(500).send("Fatal error");
+          if (!res.headersSent) res.status(500).send("Fatal error");
           return;
         }
       } else {
@@ -346,6 +355,7 @@ async function startServer() {
         return;
       }
     } else {
+      console.warn(`[SERVER] Rejeitando chunk: FFmpeg vivo=${isAlive}, tipo=${db.stream_status.current_source_type}`);
       res.status(400).send("FFmpeg not running or not in web mode");
       return;
     }
