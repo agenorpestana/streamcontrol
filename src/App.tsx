@@ -118,6 +118,11 @@ export default function App() {
   const processChunkQueue = async () => {
     if (isSendingChunkRef.current || chunkQueueRef.current.length === 0 || !isLocalStreamingRef.current) return;
     
+    // Debug socket state
+    if (Math.random() < 0.05) {
+      console.log(`[CLIENTE] Estado do Socket: conectado=${socketRef.current?.connected}, id=${socketRef.current?.id}`);
+    }
+
     // If socket is connected, prefer socket for lower overhead
     if (socketRef.current && socketRef.current.connected) {
       const buffer = chunkQueueRef.current.shift();
@@ -231,6 +236,7 @@ export default function App() {
       
       // Initialize socket with websocket only for better stability in this environment
       const socket = io(window.location.origin, {
+        auth: { token: localStorage.getItem('token') },
         transports: ['websocket'],
         reconnectionAttempts: 50,
         reconnectionDelay: 2000,
@@ -244,7 +250,7 @@ export default function App() {
       socket.on('connect', () => {
         setSocketConnected(true);
         const transport = socket.io.engine.transport.name;
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Socket Conectado (Transporte: ${transport})\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Socket Conectado via ${transport.toUpperCase()}\n`]);
       });
 
       socket.on('disconnect', (reason) => {
@@ -257,15 +263,9 @@ export default function App() {
       });
 
       socket.on('connect_error', (err) => {
+        setSocketConnected(false);
         console.error("Socket connection error:", err);
-        // More distinct message for debugging
-        const errorMsg = err.message === 'Failed to fetch' 
-          ? 'ERRO DE CONEXÃO: O navegador bloqueou a conexão Socket.io. Verifique se o servidor está ativo.' 
-          : err.message;
-        
-        if (err.message !== 'xhr poll error' && err.message !== 'websocket error') {
-          setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] ${errorMsg}\n`]);
-        }
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro de Conexão Socket: ${err.message}. Usando fallback POST.\n`]);
       });
 
       socket.on('stream_status', (newStatus: StreamStatus) => {
@@ -608,7 +608,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(500); // Smaller chunks (500ms) for smoother streaming
+      recorder.start(1000); // 1 second chunks - better balance between latency and overhead
       mediaRecorderRef.current = recorder;
     }, 500);
   };

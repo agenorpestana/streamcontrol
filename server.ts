@@ -221,10 +221,11 @@ async function startServer() {
       } else if (type === "web") {
         inputArgs = [
           "-use_wallclock_as_timestamps", "1",
-          "-fflags", "+nobuffer+genpts+igndts",
-          "-thread_queue_size", "4096",
-          "-probesize", "2M",
-          "-analyzeduration", "2M",
+          "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
+          "-thread_queue_size", "8192",
+          "-probesize", "5M",
+          "-analyzeduration", "5M",
+          "-max_delay", "500000",
           "-f", "webm",
           "-i", "pipe:0"
         ];
@@ -279,8 +280,12 @@ async function startServer() {
       });
 
       ffmpegProcess.on("exit", (code, signal) => {
-        console.log(`FFmpeg saiu com código ${code} e sinal ${signal}`);
-        addLog(`[SERVER] FFmpeg parou (Código: ${code}, Sinal: ${signal})\n`);
+        const msg = `[SERVER] FFmpeg parou (Código: ${code}, Sinal: ${signal})`;
+        console.log(msg);
+        addLog(`${msg}\n`);
+        if (code !== 0 && code !== null) {
+          addLog(`[SISTEMA] Dica: Verifique se a sua conexão de upload é estável e se a chave do YouTube não expirou.\n`);
+        }
         stopStream();
       });
 
