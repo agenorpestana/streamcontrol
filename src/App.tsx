@@ -569,16 +569,18 @@ export default function App() {
         stream.addTrack(silentTrack);
       }
 
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') 
-        ? 'video/webm;codecs=vp8,opus' 
-        : 'video/webm';
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')
+        ? 'video/webm;codecs=h264,opus'
+        : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') 
+          ? 'video/webm;codecs=vp8,opus' 
+          : 'video/webm';
         
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Usando mimeType: ${mimeType}\n`]);
-      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Bitrate: 800kbps (Otimizado para estabilidade)\n`]);
+      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Bitrate: 600kbps (Otimizado para estabilidade)\n`]);
 
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 800000, // Reduced for better stability
+        videoBitsPerSecond: 600000, // Reduced for better stability
         audioBitsPerSecond: 96000
       });
 
@@ -606,7 +608,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(2000); // 2 second chunks for better stability with HTTP POST fallback
+      recorder.start(500); // Smaller chunks (500ms) for smoother streaming
       mediaRecorderRef.current = recorder;
     }, 500);
   };

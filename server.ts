@@ -220,9 +220,12 @@ async function startServer() {
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"];
       } else if (type === "web") {
         inputArgs = [
+          "-use_wallclock_as_timestamps", "1",
           "-fflags", "+nobuffer+genpts+igndts",
-          "-thread_queue_size", "1024",
-          "-f", "webm", // MediaRecorder outputs webm
+          "-thread_queue_size", "4096",
+          "-probesize", "10M",
+          "-analyzeduration", "10M",
+          "-f", "webm",
           "-i", "pipe:0"
         ];
         // Explicitly map video and audio, making audio optional
@@ -233,7 +236,7 @@ async function startServer() {
       const args = [
         ...inputArgs,
         "-c:v", "libx264",
-        "-preset", "ultrafast",
+        "-preset", "superfast",
         "-tune", "zerolatency",
         "-profile:v", "high",
         "-level", "4.1",
@@ -242,10 +245,10 @@ async function startServer() {
         "-g", "50",
         "-keyint_min", "50",
         "-sc_threshold", "0", 
-        "-b:v", "2000k",
+        "-b:v", "1500k",
         "-minrate", "1500k",
-        "-maxrate", "2500k",
-        "-bufsize", "4000k",
+        "-maxrate", "1500k",
+        "-bufsize", "6000k",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
