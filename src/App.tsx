@@ -116,9 +116,27 @@ export default function App() {
   const processChunkQueue = async () => {
     if (isSendingChunkRef.current || chunkQueueRef.current.length === 0 || !isLocalStreamingRef.current) return;
     
+    // If socket is connected, prefer socket for lower overhead
+    if (socketRef.current && socketRef.current.connected) {
+      const buffer = chunkQueueRef.current.shift();
+      if (buffer) {
+        socketRef.current.emit('web_data', buffer);
+        if (Math.random() < 0.1) {
+          setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Chunk enviado via Socket (Fila: ${chunkQueueRef.current.length})\n`]);
+        }
+      }
+      // Process next immediately
+      setTimeout(processChunkQueue, 10);
+      return;
+    }
+
+    // Fallback to HTTP POST if socket is disconnected
     isSendingChunkRef.current = true;
     const buffer = chunkQueueRef.current.shift();
     const token = localStorage.getItem('token');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
     try {
       const res = await fetch('/api/stream/web-data', {
@@ -127,25 +145,39 @@ export default function App() {
           'Content-Type': 'application/octet-stream',
           'Authorization': `Bearer ${token}`
         },
-        body: buffer
+        body: buffer,
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`HTTP ${res.status}: ${text}`);
       }
       
+      if (Math.random() < 0.1) {
+        setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Chunk enviado via POST (Fila: ${chunkQueueRef.current.length})\n`]);
+      }
+      
       isSendingChunkRef.current = false;
-      processChunkQueue();
+      // Small delay between POST requests to avoid browser throttling
+      setTimeout(processChunkQueue, 50);
     } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error("[CLIENTE] Erro ao enviar chunk:", err);
-      if (chunkQueueRef.current.length < 10) {
+      
+      // If it's a timeout or network error, put it back and wait a bit
+      if (chunkQueueRef.current.length < 15) {
         if (buffer) chunkQueueRef.current.unshift(buffer);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro no envio (POST). Retentando em 2s... (Fila: ${chunkQueueRef.current.length})\n`]);
         setTimeout(() => {
           isSendingChunkRef.current = false;
           processChunkQueue();
-        }, 1000);
+        }, 2000);
       } else {
+        // Queue too big, drop it to avoid infinite memory growth
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Fila muito grande (${chunkQueueRef.current.length}), descartando chunk.\n`]);
         isSendingChunkRef.current = false;
         processChunkQueue();
       }
@@ -535,7 +567,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(1000); // 1 second chunks for better responsiveness
+      recorder.start(2000); // 2 second chunks for better stability with HTTP POST fallback
       mediaRecorderRef.current = recorder;
     }, 500);
   };

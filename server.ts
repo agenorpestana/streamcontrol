@@ -224,10 +224,11 @@ async function startServer() {
           "-probesize", "2M",
           "-analyzeduration", "2M",
           "-f", "webm",
-          "-i", "pipe:0",
-          "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+          "-i", "pipe:0"
         ];
-        mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
+        // Try to use audio from input, if not available FFmpeg might fail, 
+        // but MediaRecorder usually sends both.
+        mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; 
       }
 
       const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
@@ -273,6 +274,12 @@ async function startServer() {
       ffmpegProcess.on("error", (err) => {
         console.error("Erro no processo FFmpeg:", err);
         addLog(`ERRO NO PROCESSO FFMPEG: ${err.message}\n`);
+      });
+
+      ffmpegProcess.on("exit", (code, signal) => {
+        console.log(`FFmpeg saiu com código ${code} e sinal ${signal}`);
+        addLog(`[SERVER] FFmpeg parou (Código: ${code}, Sinal: ${signal})\n`);
+        stopStream();
       });
 
       if (type === "web") {
@@ -324,7 +331,9 @@ async function startServer() {
     const db = getDb();
     const isAlive = ffmpegProcess && !ffmpegProcess.killed && ffmpegProcess.exitCode === null;
     
-    console.log(`[SERVER] Recebido chunk de dados web: ${req.body?.length || 0} bytes. FFmpeg vivo: ${isAlive}`);
+    if (Math.random() < 0.05) {
+      console.log(`[SERVER] Recebido chunk POST: ${req.body?.length || 0} bytes. FFmpeg: ${isAlive}`);
+    }
 
     if (isAlive && db.stream_status.current_source_type === "web") {
       if (ffmpegProcess!.stdin && ffmpegProcess!.stdin.writable) {
