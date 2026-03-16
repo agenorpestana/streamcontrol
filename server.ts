@@ -90,6 +90,11 @@ async function startServer() {
   let ffmpegProcess: ChildProcess | null = null;
   let ffmpegLogs: string[] = [];
 
+  io.use((socket, next) => {
+    console.log(`[SOCKET] Tentativa de conexão de ${socket.id} com transporte ${socket.conn.transport.name}`);
+    next();
+  });
+
   const addLog = (data: string) => {
     ffmpegLogs.push(data);
     if (ffmpegLogs.length > 100) ffmpegLogs.shift();
@@ -222,13 +227,12 @@ async function startServer() {
         inputArgs = [
           "-use_wallclock_as_timestamps", "1",
           "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
-          "-thread_queue_size", "1024",
+          "-thread_queue_size", "4096",
+          "-probesize", "5M",
+          "-analyzeduration", "5M",
           "-f", "webm",
           "-i", "pipe:0"
         ];
-        // Try to copy video if it's already H264, otherwise transcode with ultrafast
-        // Since we can't easily detect input codec here, we'll stick to transcoding 
-        // but with even more aggressive settings for low CPU usage.
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; 
       }
 
@@ -255,7 +259,7 @@ async function startServer() {
         "-f", "flv",
         "-flvflags", "no_duration_filesize",
         "-max_muxing_queue_size", "1024",
-        "-threads", "1", // Limit to 1 thread to avoid CPU spikes
+        "-threads", "0",
         rtmpUrl
       ];
 
