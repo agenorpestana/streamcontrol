@@ -153,6 +153,15 @@ export default function App() {
 
       clearTimeout(timeoutId);
 
+      if (res.status === 400) {
+        const text = await res.text();
+        if (text.includes("FFmpeg not running")) {
+          console.error("[CLIENTE] Servidor informou que FFmpeg parou. Interrompendo envio local.");
+          stopWebBroadcast();
+          return;
+        }
+      }
+      
       if (!res.ok) {
         const text = await res.text();
         const errorMsg = `HTTP ${res.status}: ${text}`;

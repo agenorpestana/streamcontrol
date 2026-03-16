@@ -220,12 +220,9 @@ async function startServer() {
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"];
       } else if (type === "web") {
         inputArgs = [
-          "-re", // Read input at native frame rate
           "-fflags", "+nobuffer+genpts+igndts",
           "-thread_queue_size", "1024",
-          "-probesize", "5M",
-          "-analyzeduration", "5M",
-          "-f", "matroska", // Matroska is more robust for pipes
+          "-f", "webm", // MediaRecorder outputs webm
           "-i", "pipe:0"
         ];
         // Explicitly map video and audio, making audio optional
@@ -300,9 +297,8 @@ async function startServer() {
 
       ffmpegProcess.stderr?.on("data", (data) => {
         const log = data.toString();
-        if (log.includes("Error") || log.includes("warning") || Math.random() < 0.05) {
-          addLog(log);
-        }
+        // Log more aggressively during startup to catch errors
+        addLog(log);
       });
 
       db.stream_status.is_streaming = true;
@@ -334,7 +330,7 @@ async function startServer() {
     const isAlive = ffmpegProcess && !ffmpegProcess.killed && ffmpegProcess.exitCode === null;
     
     if (Math.random() < 0.05) {
-      console.log(`[SERVER] Recebido chunk POST: ${req.body?.length || 0} bytes. FFmpeg: ${isAlive}`);
+      console.log(`[SERVER] Recebido chunk POST: ${req.body?.length || 0} bytes. FFmpeg: ${isAlive}, Type: ${db.stream_status.current_source_type}`);
     }
 
     if (isAlive && db.stream_status.current_source_type === "web") {
