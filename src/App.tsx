@@ -113,6 +113,8 @@ export default function App() {
     isLocalStreamingRef.current = val;
   };
 
+  const errorCountRef = useRef(0);
+
   const processChunkQueue = async () => {
     if (isSendingChunkRef.current || chunkQueueRef.current.length === 0 || !isLocalStreamingRef.current) return;
     
@@ -136,7 +138,7 @@ export default function App() {
     const token = localStorage.getItem('token');
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
 
     try {
       const res = await fetch('/api/stream/web-data', {
@@ -153,8 +155,12 @@ export default function App() {
 
       if (!res.ok) {
         const text = await res.text();
-        throw new Error(`HTTP ${res.status}: ${text}`);
+        const errorMsg = `HTTP ${res.status}: ${text}`;
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro Servidor: ${errorMsg}\n`]);
+        throw new Error(errorMsg);
       }
+      
+      errorCountRef.current = 0; // Reset error count on success
       
       if (Math.random() < 0.1) {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Chunk enviado via POST (Fila: ${chunkQueueRef.current.length})\n`]);
@@ -167,17 +173,34 @@ export default function App() {
       clearTimeout(timeoutId);
       console.error("[CLIENTE] Erro ao enviar chunk:", err);
       
+      errorCountRef.current++;
+      
+      // If we have too many errors, try to restart the whole thing
+      if (errorCountRef.current > 10) {
+        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Falha crítica na conexão. Reiniciando broadcast...\n"]);
+        errorCountRef.current = 0;
+        isSendingChunkRef.current = false;
+        chunkQueueRef.current = [];
+        // Attempt to restart
+        setTimeout(() => {
+          if (isLocalStreamingRef.current) {
+            startWebBroadcast();
+          }
+        }, 1000);
+        return;
+      }
+
       // If it's a timeout or network error, put it back and wait a bit
-      if (chunkQueueRef.current.length < 15) {
+      if (chunkQueueRef.current.length < 20) {
         if (buffer) chunkQueueRef.current.unshift(buffer);
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro no envio (POST). Retentando em 2s... (Fila: ${chunkQueueRef.current.length})\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro no envio. Retentando em 3s... (Fila: ${chunkQueueRef.current.length})\n`]);
         setTimeout(() => {
           isSendingChunkRef.current = false;
           processChunkQueue();
-        }, 2000);
+        }, 3000);
       } else {
         // Queue too big, drop it to avoid infinite memory growth
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Fila muito grande (${chunkQueueRef.current.length}), descartando chunk.\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Fila saturada (${chunkQueueRef.current.length}), descartando chunk.\n`]);
         isSendingChunkRef.current = false;
         processChunkQueue();
       }
@@ -351,6 +374,12 @@ export default function App() {
         const s = await statusRes.json();
         setStatus(s);
         setYtKey(s.youtube_key);
+
+        // Watchdog: if server says it's not web anymore, but we are still streaming locally
+        if (isLocalStreamingRef.current && s.current_source_type !== 'web' && !isSwitching) {
+          console.warn("[CLIENTE] Servidor não está mais em modo web. Parando local...");
+          stopWebBroadcast();
+        }
       }
     } catch (e) {
       console.error(e);
@@ -536,11 +565,12 @@ export default function App() {
         : 'video/webm';
         
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Usando mimeType: ${mimeType}\n`]);
+      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Bitrate: 800kbps (Otimizado para estabilidade)\n`]);
 
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 1500000, // Reduced for better stability
-        audioBitsPerSecond: 128000
+        videoBitsPerSecond: 800000, // Reduced for better stability
+        audioBitsPerSecond: 96000
       });
 
       recorder.ondataavailable = async (event) => {
@@ -578,6 +608,9 @@ export default function App() {
       mediaRecorderRef.current = null;
     }
     updateLocalStreaming(false);
+    chunkQueueRef.current = [];
+    isSendingChunkRef.current = false;
+    errorCountRef.current = 0;
   };
 
   const addCamera = async () => {

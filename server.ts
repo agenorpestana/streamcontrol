@@ -219,15 +219,15 @@ async function startServer() {
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"];
       } else if (type === "web") {
         inputArgs = [
+          "-re", // Read input at native frame rate
           "-fflags", "+nobuffer+genpts+igndts",
           "-thread_queue_size", "1024",
-          "-probesize", "2M",
-          "-analyzeduration", "2M",
-          "-f", "webm",
+          "-probesize", "5M",
+          "-analyzeduration", "5M",
+          "-f", "matroska", // Matroska is more robust for pipes
           "-i", "pipe:0"
         ];
-        // Try to use audio from input, if not available FFmpeg might fail, 
-        // but MediaRecorder usually sends both.
+        // Explicitly map video and audio, making audio optional
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; 
       }
 
@@ -235,7 +235,8 @@ async function startServer() {
       const args = [
         ...inputArgs,
         "-c:v", "libx264",
-        "-preset", "veryfast",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
         "-profile:v", "high",
         "-level", "4.1",
         "-pix_fmt", "yuv420p",
@@ -243,10 +244,10 @@ async function startServer() {
         "-g", "50",
         "-keyint_min", "50",
         "-sc_threshold", "0", 
-        "-b:v", "3000k",
-        "-minrate", "2500k",
-        "-maxrate", "3500k",
-        "-bufsize", "6000k",
+        "-b:v", "2000k",
+        "-minrate", "1500k",
+        "-maxrate", "2500k",
+        "-bufsize", "4000k",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
