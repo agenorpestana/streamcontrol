@@ -78,8 +78,8 @@ async function startServer() {
       origin: "*",
       methods: ["GET", "POST"]
     },
-    transports: ['websocket'],
-    allowUpgrades: false,
+    transports: ['polling', 'websocket'],
+    allowUpgrades: true,
     pingTimeout: 60000,
     pingInterval: 25000,
     maxHttpBufferSize: 1e8,
@@ -247,9 +247,9 @@ async function startServer() {
         "-keyint_min", "50",
         "-sc_threshold", "0", 
         "-b:v", "2500k",
-        "-minrate", "2500k",
-        "-maxrate", "2500k",
-        "-bufsize", "5000k",
+        "-minrate", "2000k",
+        "-maxrate", "3000k",
+        "-bufsize", "6000k",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",
@@ -346,32 +346,35 @@ async function startServer() {
         try {
           const buffer = req.body;
           if (buffer && buffer.length > 0) {
-            ffmpegProcess!.stdin.write(buffer, (err) => {
+            const success = ffmpegProcess!.stdin.write(buffer, (err) => {
               if (err) {
                 console.error("Erro ao escrever no stdin do FFmpeg:", err);
-                if (!res.headersSent) res.status(500).send("Error writing to FFmpeg");
+                if (!res.headersSent) res.status(500).send(`Error writing to FFmpeg: ${err.message}`);
               } else {
                 if (!res.headersSent) res.status(200).send("OK");
               }
             });
+            if (!success) {
+              console.warn("[SERVER] Stdin buffer cheio (POST), aguardando drain...");
+            }
             return;
           } else {
             console.warn("[SERVER] Chunk vazio recebido.");
             res.status(400).send("Empty chunk");
           }
-        } catch (e) {
+        } catch (e: any) {
           console.error("Erro fatal ao escrever no stdin via POST:", e);
-          if (!res.headersSent) res.status(500).send("Fatal error");
+          if (!res.headersSent) res.status(500).send(`Fatal error: ${e.message}`);
           return;
         }
       } else {
         console.warn("[SERVER] FFmpeg stdin não está pronto para escrita.");
-        res.status(503).send("FFmpeg stdin not ready");
+        res.status(503).send("FFmpeg stdin not ready or pipe closed");
         return;
       }
     } else {
       console.warn(`[SERVER] Rejeitando chunk: FFmpeg vivo=${isAlive}, tipo=${db.stream_status.current_source_type}`);
-      res.status(400).send("FFmpeg not running or not in web mode");
+      res.status(400).send(`FFmpeg not running or not in web mode (Alive: ${isAlive})`);
       return;
     }
   });

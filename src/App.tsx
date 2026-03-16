@@ -237,7 +237,9 @@ export default function App() {
       // Initialize socket with websocket only for better stability in this environment
       const socket = io(window.location.origin, {
         auth: { token: localStorage.getItem('token') },
-        transports: ['websocket'],
+        transports: ['polling', 'websocket'],
+        upgrade: true,
+        rememberUpgrade: true,
         reconnectionAttempts: 50,
         reconnectionDelay: 2000,
         reconnectionDelayMax: 10000,
