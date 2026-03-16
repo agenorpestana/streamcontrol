@@ -576,12 +576,12 @@ export default function App() {
           : 'video/webm';
         
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Usando mimeType: ${mimeType}\n`]);
-      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Bitrate: 600kbps (Otimizado para estabilidade)\n`]);
+      setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Bitrate: 2500kbps (Recomendado pelo YouTube)\n`]);
 
       const recorder = new MediaRecorder(stream, {
         mimeType,
-        videoBitsPerSecond: 600000, // Reduced for better stability
-        audioBitsPerSecond: 96000
+        videoBitsPerSecond: 2500000, // Increased to match YouTube recommendation
+        audioBitsPerSecond: 128000
       });
 
       recorder.ondataavailable = async (event) => {
