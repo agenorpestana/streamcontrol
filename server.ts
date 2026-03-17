@@ -403,6 +403,8 @@ async function startServer() {
 
     const args = [
       "-rtsp_transport", "tcp",
+      "-probesize", "32",
+      "-analyzeduration", "0",
       "-i", cam.rtsp_url,
       "-frames:v", "1",
       "-an", // Disable audio for faster snapshot
@@ -416,7 +418,7 @@ async function startServer() {
     const timeout = setTimeout(() => {
       ffmpeg.kill("SIGKILL");
       if (!res.headersSent) res.status(504).end();
-    }, 8000);
+    }, 4000); // Reduced timeout to 4s
 
     // Log snapshot errors to the main log buffer for debugging
     ffmpeg.stderr.on("data", (data) => {

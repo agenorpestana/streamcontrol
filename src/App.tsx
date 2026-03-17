@@ -41,7 +41,7 @@ const CameraPreview = ({ camId, className }: { camId: number, className?: string
 
     const interval = setInterval(() => {
       setSrc(getSnapshotUrl());
-    }, 3000); 
+    }, 1000); 
     return () => clearInterval(interval);
   }, [camId, token]);
 
@@ -237,7 +237,9 @@ export default function App() {
       // Initialize socket with standard settings for better compatibility
       const socket = io(window.location.origin, {
         auth: { token: localStorage.getItem('token') },
-        transports: ['websocket', 'polling'], // Prefer websocket
+        transports: ['polling', 'websocket'], // Try polling first for better compatibility in restricted environments
+        upgrade: true,
+        rememberUpgrade: true,
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
