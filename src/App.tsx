@@ -118,32 +118,32 @@ export default function App() {
   const processChunkQueue = async () => {
     if (isSendingChunkRef.current || chunkQueueRef.current.length === 0 || !isLocalStreamingRef.current) return;
     
-    // Debug socket state
-    if (Math.random() < 0.05) {
-      console.log(`[CLIENTE] Estado do Socket: conectado=${socketRef.current?.connected}, id=${socketRef.current?.id}`);
-    }
+    isSendingChunkRef.current = true;
+    const buffer = chunkQueueRef.current[0]; // Peek first chunk
 
     // If socket is connected, prefer socket for lower overhead
     if (socketRef.current && socketRef.current.connected) {
-      const buffer = chunkQueueRef.current.shift();
-      if (buffer) {
+      try {
         socketRef.current.emit('web_data', buffer);
+        chunkQueueRef.current.shift(); // Remove from queue after emit
+        
         if (Math.random() < 0.1) {
           setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Chunk enviado via Socket (Fila: ${chunkQueueRef.current.length})\n`]);
         }
+        
+        isSendingChunkRef.current = false;
+        setTimeout(processChunkQueue, 10);
+        return;
+      } catch (err) {
+        console.error("[CLIENTE] Erro ao emitir via socket:", err);
+        // Fallback to POST below
       }
-      // Process next immediately
-      setTimeout(processChunkQueue, 10);
-      return;
     }
 
-    // Fallback to HTTP POST if socket is disconnected
-    isSendingChunkRef.current = true;
-    const buffer = chunkQueueRef.current.shift();
+    // Fallback to HTTP POST if socket is disconnected or failed
     const token = localStorage.getItem('token');
-
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 15000);
 
     try {
       const res = await fetch('/api/stream/web-data', {
@@ -174,14 +174,14 @@ export default function App() {
         throw new Error(errorMsg);
       }
       
-      errorCountRef.current = 0; // Reset error count on success
+      chunkQueueRef.current.shift(); // Remove from queue on success
+      errorCountRef.current = 0;
       
       if (Math.random() < 0.1) {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Chunk enviado via POST (Fila: ${chunkQueueRef.current.length})\n`]);
       }
       
       isSendingChunkRef.current = false;
-      // Small delay between POST requests to avoid browser throttling
       setTimeout(processChunkQueue, 50);
     } catch (err: any) {
       clearTimeout(timeoutId);
@@ -189,34 +189,18 @@ export default function App() {
       
       errorCountRef.current++;
       
-      // If we have too many errors, try to restart the whole thing
       if (errorCountRef.current > 10) {
         setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Falha crítica na conexão. Reiniciando broadcast...\n"]);
         errorCountRef.current = 0;
         isSendingChunkRef.current = false;
         chunkQueueRef.current = [];
-        // Attempt to restart
         setTimeout(() => {
-          if (isLocalStreamingRef.current) {
-            startWebBroadcast();
-          }
-        }, 1000);
-        return;
-      }
-
-      // If it's a timeout or network error, put it back and wait a bit
-      if (chunkQueueRef.current.length < 20) {
-        if (buffer) chunkQueueRef.current.unshift(buffer);
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Erro no envio. Retentando em 3s... (Fila: ${chunkQueueRef.current.length})\n`]);
-        setTimeout(() => {
-          isSendingChunkRef.current = false;
-          processChunkQueue();
-        }, 3000);
+          if (isLocalStreamingRef.current) startWebBroadcast();
+        }, 2000);
       } else {
-        // Queue too big, drop it to avoid infinite memory growth
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Fila saturada (${chunkQueueRef.current.length}), descartando chunk.\n`]);
         isSendingChunkRef.current = false;
-        processChunkQueue();
+        // If it's a timeout or network error, wait a bit before retrying the same chunk
+        setTimeout(processChunkQueue, 1000);
       }
     }
   };
@@ -236,10 +220,7 @@ export default function App() {
       
       // Initialize socket with standard settings for better compatibility
       const socket = io(window.location.origin, {
-        auth: { token: localStorage.getItem('token') },
-        transports: ['polling', 'websocket'], // Try polling first for better compatibility in restricted environments
-        upgrade: true,
-        rememberUpgrade: true,
+        transports: ['websocket'], // Force websocket to avoid polling issues
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
@@ -609,7 +590,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(2000); // 2 second chunks - even less overhead for the server
+      recorder.start(4000); // 4 second chunks for better stability
       mediaRecorderRef.current = recorder;
     }, 500);
   };

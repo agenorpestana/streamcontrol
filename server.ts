@@ -78,22 +78,15 @@ async function startServer() {
       origin: "*",
       methods: ["GET", "POST"]
     },
-    transports: ['polling', 'websocket'],
-    allowUpgrades: true,
+    transports: ['websocket'], // Force websocket to avoid polling "server error" noise
     pingTimeout: 60000,
     pingInterval: 25000,
-    maxHttpBufferSize: 1e8,
-    connectTimeout: 60000
+    maxHttpBufferSize: 1e8
   });
 
   // FFmpeg Management
   let ffmpegProcess: ChildProcess | null = null;
   let ffmpegLogs: string[] = [];
-
-  io.use((socket, next) => {
-    console.log(`[SOCKET] Tentativa de conexão de ${socket.id} com transporte ${socket.conn.transport.name}`);
-    next();
-  });
 
   const addLog = (data: string) => {
     ffmpegLogs.push(data);
@@ -227,9 +220,9 @@ async function startServer() {
         inputArgs = [
           "-use_wallclock_as_timestamps", "1",
           "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
-          "-thread_queue_size", "4096",
-          "-probesize", "5M",
-          "-analyzeduration", "5M",
+          "-thread_queue_size", "16384",
+          "-probesize", "1M", // Reduced for faster start
+          "-analyzeduration", "1M", // Reduced for faster start
           "-f", "webm",
           "-i", "pipe:0"
         ];
@@ -258,6 +251,8 @@ async function startServer() {
         ...mappingArgs,
         "-f", "flv",
         "-flvflags", "no_duration_filesize",
+        "-rtmp_buffer", "1000",
+        "-rtmp_live", "live",
         "-max_muxing_queue_size", "1024",
         "-threads", "0",
         rtmpUrl
