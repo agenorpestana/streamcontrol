@@ -9,6 +9,38 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import cors from "cors";
 import multer from "multer";
+import https from "https";
+
+// Font downloader for sports scoreboard overlay in FFmpeg
+const fontPath = path.join(process.cwd(), "sportsfont.ttf");
+if (!fs.existsSync(fontPath)) {
+  console.log("Baixando fonte TTF para o overlay do painel...");
+  const fontFile = fs.createWriteStream(fontPath);
+  https.get("https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/resources/ttf/DejaVuSans-Bold.ttf", (response) => {
+    response.pipe(fontFile);
+    fontFile.on("finish", () => {
+      fontFile.close();
+      console.log("Fonte TTF baixada e salva com sucesso.");
+    });
+  }).on("error", (err) => {
+    console.error("Erro ao baixar fonte TTF:", err.message);
+  });
+}
+
+const writeSportsFiles = (status: any) => {
+  try {
+    fs.writeFileSync("./teama.txt", (status.team_a_name || "TIME A").toUpperCase());
+    fs.writeFileSync("./teamb.txt", (status.team_b_name || "TIME B").toUpperCase());
+    fs.writeFileSync("./scorea.txt", String(status.score_a ?? 0));
+    fs.writeFileSync("./scoreb.txt", String(status.score_b ?? 0));
+    const mins = Math.floor((status.timer_seconds || 0) / 60);
+    const secs = (status.timer_seconds || 0) % 60;
+    const timeStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    fs.writeFileSync("./timer.txt", timeStr);
+  } catch (err) {
+    console.error("Erro ao gravar arquivos do painel esportivo:", err);
+  }
+};
 
 // Mock Database for Preview (In production, use MySQL)
 const DB_FILE = path.join(process.cwd(), "data.json");
@@ -26,10 +58,46 @@ const initDb = () => {
         { id: 2, name: "Câmera 02", rtsp_url: "rtsp://demo:demo@static.cartesian.io:554/live/ch0", is_active: true }
       ],
       videos: [],
-      stream_status: { current_source_type: "none", current_source_id: null, is_streaming: false, youtube_key: "", loop_video: false }
+      stream_status: { 
+        current_source_type: "none", 
+        current_source_id: null, 
+        is_streaming: false, 
+        youtube_key: "", 
+        loop_video: false,
+        scoreboard_enabled: false,
+        timer_enabled: false,
+        team_a_name: "TIME A",
+        team_b_name: "TIME B",
+        score_a: 0,
+        score_b: 0,
+        timer_seconds: 0,
+        timer_running: false
+      }
     }, null, 2));
   }
   dbCache = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+  
+  // Ensure default stream status fields exist for sports overlay
+  let updated = false;
+  if (!dbCache.stream_status) {
+    dbCache.stream_status = {};
+  }
+  if (dbCache.stream_status.scoreboard_enabled === undefined) {
+    dbCache.stream_status.scoreboard_enabled = false;
+    dbCache.stream_status.timer_enabled = false;
+    dbCache.stream_status.team_a_name = "TIME A";
+    dbCache.stream_status.team_b_name = "TIME B";
+    dbCache.stream_status.score_a = 0;
+    dbCache.stream_status.score_b = 0;
+    dbCache.stream_status.timer_seconds = 0;
+    dbCache.stream_status.timer_running = false;
+    updated = true;
+  }
+  if (updated) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(dbCache, null, 2));
+  }
+  
+  writeSportsFiles(dbCache.stream_status);
 };
 initDb();
 
@@ -141,6 +209,25 @@ async function startServer() {
     });
   });
 
+  // Server-side stopwatch timer ticking
+  setInterval(() => {
+    const db = getDb();
+    let changed = false;
+    if (db.stream_status.timer_running) {
+      db.stream_status.timer_seconds = (db.stream_status.timer_seconds || 0) + 1;
+      changed = true;
+    }
+    
+    // Periodically update the dynamic txt files so FFmpeg drawtext reloads them correctly
+    if (db.stream_status.scoreboard_enabled || db.stream_status.timer_enabled || changed) {
+      writeSportsFiles(db.stream_status);
+      if (changed) {
+        saveDb(db);
+        io.emit("stream_status", db.stream_status);
+      }
+    }
+  }, 1000);
+
   const PORT = Number(process.env.PORT) || 3000;
   const JWT_SECRET = process.env.JWT_SECRET || "stream-control-secret-123";
 
@@ -229,10 +316,54 @@ async function startServer() {
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; 
       }
 
+      let vfFilters = "fps=25,format=yuv420p";
+      
+      if ((type === "camera" || type === "video") && (db.stream_status.scoreboard_enabled || db.stream_status.timer_enabled)) {
+        writeSportsFiles(db.stream_status);
+        
+        const fontFileOpt = fs.existsSync(fontPath) ? `:fontfile='${fontPath}'` : "";
+        let sportsFilters = [];
+        
+        if (db.stream_status.scoreboard_enabled) {
+          // Semi-transparent dark background card (Width: 320, Height: 42)
+          sportsFilters.push("drawbox=x=40:y=40:w=320:h=42:color=black@0.85:t=fill");
+          // Yellow neon border on the left
+          sportsFilters.push("drawbox=x=40:y=40:w=4:h=42:color=0xEAB308:t=fill");
+          
+          // Team A Name (drawn to the left of Team A score, right-aligned relative to 140)
+          sportsFilters.push(`drawtext=textfile=teama.txt:reload=1:x=140-w:y=52:fontcolor=white:fontsize=15${fontFileOpt}`);
+          // Score A Box & value
+          sportsFilters.push(`drawtext=textfile=scorea.txt:reload=1:x=152:y=50:fontcolor=white:fontsize=18:box=1:boxcolor=white@0.12:boxborderw=6${fontFileOpt}`);
+          
+          // Visual Divider
+          sportsFilters.push(`drawtext=text='-':x=196:y=52:fontcolor=white@0.4:fontsize=16${fontFileOpt}`);
+          
+          // Score B Box & value
+          sportsFilters.push(`drawtext=textfile=scoreb.txt:reload=1:x=214:y=50:fontcolor=white:fontsize=18:box=1:boxcolor=white@0.12:boxborderw=6${fontFileOpt}`);
+          // Team B Name (drawn to the right of Score B)
+          sportsFilters.push(`drawtext=textfile=teamb.txt:reload=1:x=246:y=52:fontcolor=white:fontsize=15${fontFileOpt}`);
+        }
+        
+        if (db.stream_status.timer_enabled) {
+          if (db.stream_status.scoreboard_enabled) {
+            // Attached timer block on the right (x=40+320+6=366, width:80, height:42)
+            sportsFilters.push("drawbox=x=366:y=40:w=80:h=42:color=0xEAB308:t=fill");
+            // Timer text (drawn on the yellow box)
+            sportsFilters.push(`drawtext=textfile=timer.txt:reload=1:x=406-w/2:y=51:fontcolor=black:fontsize=16${fontFileOpt}`);
+          } else {
+            // Standalone timer block (x=40, width:90, height:42)
+            sportsFilters.push("drawbox=x=40:y=40:w=90:h=42:color=0xEAB308:t=fill");
+            sportsFilters.push(`drawtext=textfile=timer.txt:reload=1:x=85-w/2:y=51:fontcolor=black:fontsize=17${fontFileOpt}`);
+          }
+        }
+        
+        vfFilters += "," + sportsFilters.join(",");
+      }
+
       const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
       const args = [
         ...inputArgs,
-        "-vf", "fps=25,format=yuv420p",
+        "-vf", vfFilters,
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
@@ -595,6 +726,55 @@ async function startServer() {
     
     io.emit("stream_status", db.stream_status);
     res.json({ success: true });
+  });
+
+  app.post("/api/status/sports", authenticate, (req, res) => {
+    const { 
+      scoreboard_enabled, 
+      timer_enabled, 
+      team_a_name, 
+      team_b_name, 
+      score_a, 
+      score_b, 
+      timer_seconds, 
+      timer_running 
+    } = req.body;
+    
+    const db = getDb();
+    const wasScoreboardEnabled = db.stream_status.scoreboard_enabled;
+    const wasTimerEnabled = db.stream_status.timer_enabled;
+    
+    if (scoreboard_enabled !== undefined) db.stream_status.scoreboard_enabled = scoreboard_enabled;
+    if (timer_enabled !== undefined) db.stream_status.timer_enabled = timer_enabled;
+    if (team_a_name !== undefined) db.stream_status.team_a_name = team_a_name;
+    if (team_b_name !== undefined) db.stream_status.team_b_name = team_b_name;
+    if (score_a !== undefined) db.stream_status.score_a = score_a;
+    if (score_b !== undefined) db.stream_status.score_b = score_b;
+    if (timer_seconds !== undefined) db.stream_status.timer_seconds = timer_seconds;
+    if (timer_running !== undefined) db.stream_status.timer_running = timer_running;
+    
+    // Write text files immediately for FFmpeg's drawtext filter to pick up
+    writeSportsFiles(db.stream_status);
+    saveDb(db);
+    
+    // Check if we need to restart the active stream because we toggled scoreboard/timer enabling state
+    let needsRestart = false;
+    if (db.stream_status.is_streaming && (db.stream_status.current_source_type === "camera" || db.stream_status.current_source_type === "video")) {
+      if (scoreboard_enabled !== undefined && scoreboard_enabled !== wasScoreboardEnabled) {
+        needsRestart = true;
+      }
+      if (timer_enabled !== undefined && timer_enabled !== wasTimerEnabled) {
+        needsRestart = true;
+      }
+    }
+    
+    if (needsRestart) {
+      console.log("[SERVER] Reiniciando transmissão devido a alteraçao dos filtros de overlay");
+      startStream(db.stream_status.current_source_type, db.stream_status.current_source_id);
+    }
+    
+    io.emit("stream_status", db.stream_status);
+    res.json({ success: true, status: db.stream_status });
   });
 
   app.post("/api/stream/switch", authenticate, async (req, res) => {

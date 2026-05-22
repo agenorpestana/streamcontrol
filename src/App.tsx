@@ -24,6 +24,14 @@ interface StreamStatus {
   is_streaming: boolean;
   youtube_key: string;
   loop_video: boolean;
+  scoreboard_enabled?: boolean;
+  timer_enabled?: boolean;
+  team_a_name?: string;
+  team_b_name?: string;
+  score_a?: number;
+  score_b?: number;
+  timer_seconds?: number;
+  timer_running?: boolean;
 }
 
 const CameraPreview = ({ camId, className, isLive = false }: { camId: number, className?: string, isLive?: boolean }) => {
@@ -246,6 +254,41 @@ export default function App() {
   useEffect(() => { timerEnabledRef.current = isTimerEnabled; }, [isTimerEnabled]);
   useEffect(() => { timerSecondsRef.current = timerSeconds; }, [timerSeconds]);
 
+  const updateSportsState = async (updates: Partial<{
+    scoreboard_enabled: boolean;
+    timer_enabled: boolean;
+    team_a_name: string;
+    team_b_name: string;
+    score_a: number;
+    score_b: number;
+    timer_seconds: number;
+    timer_running: boolean;
+  }>) => {
+    // Optimistic UI updates
+    if (updates.scoreboard_enabled !== undefined) setIsScoreboardEnabled(updates.scoreboard_enabled);
+    if (updates.timer_enabled !== undefined) setIsTimerEnabled(updates.timer_enabled);
+    if (updates.team_a_name !== undefined) setTeamAName(updates.team_a_name);
+    if (updates.team_b_name !== undefined) setTeamBName(updates.team_b_name);
+    if (updates.score_a !== undefined) setScoreA(updates.score_a);
+    if (updates.score_b !== undefined) setScoreB(updates.score_b);
+    if (updates.timer_seconds !== undefined) setTimerSeconds(updates.timer_seconds);
+    if (updates.timer_running !== undefined) setIsTimerRunning(updates.timer_running);
+
+    const token = localStorage.getItem('token');
+    try {
+      await fetch('/api/status/sports', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify(updates)
+      });
+    } catch (e) {
+      console.error("Erro ao sincronizar placar esportivo com o servidor:", e);
+    }
+  };
+
   // Sports stopwatch timer tick
   useEffect(() => {
     let interval: any = null;
@@ -307,6 +350,21 @@ export default function App() {
 
       socket.on('stream_status', (newStatus: StreamStatus) => {
         setStatus(newStatus);
+        
+        const activeEl = document.activeElement;
+        const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+        
+        if (newStatus.scoreboard_enabled !== undefined) setIsScoreboardEnabled(newStatus.scoreboard_enabled);
+        if (newStatus.timer_enabled !== undefined) setIsTimerEnabled(newStatus.timer_enabled);
+        if (!isTyping) {
+          if (newStatus.team_a_name !== undefined) setTeamAName(newStatus.team_a_name || 'TIME A');
+          if (newStatus.team_b_name !== undefined) setTeamBName(newStatus.team_b_name || 'TIME B');
+        }
+        if (newStatus.score_a !== undefined) setScoreA(newStatus.score_a);
+        if (newStatus.score_b !== undefined) setScoreB(newStatus.score_b);
+        if (newStatus.timer_seconds !== undefined) setTimerSeconds(newStatus.timer_seconds);
+        if (newStatus.timer_running !== undefined) setIsTimerRunning(newStatus.timer_running);
+
         // Use ref to avoid stale closure
         if (!newStatus.is_streaming && isLocalStreamingRef.current) {
           stopWebBroadcast();
@@ -488,6 +546,16 @@ export default function App() {
         const s = await statusRes.json();
         setStatus(s);
         setYtKey(s.youtube_key);
+
+        // Map scoreboard/timer states from server
+        if (s.scoreboard_enabled !== undefined) setIsScoreboardEnabled(s.scoreboard_enabled);
+        if (s.timer_enabled !== undefined) setIsTimerEnabled(s.timer_enabled);
+        if (s.team_a_name !== undefined) setTeamAName(s.team_a_name);
+        if (s.team_b_name !== undefined) setTeamBName(s.team_b_name);
+        if (s.score_a !== undefined) setScoreA(s.score_a);
+        if (s.score_b !== undefined) setScoreB(s.score_b);
+        if (s.timer_seconds !== undefined) setTimerSeconds(s.timer_seconds);
+        if (s.timer_running !== undefined) setIsTimerRunning(s.timer_running);
 
         // Watchdog: if server says it's not web anymore, but we are still streaming locally
         if (isLocalStreamingRef.current && s.current_source_type !== 'web' && !isSwitching) {
@@ -1156,7 +1224,7 @@ export default function App() {
 
                         {/* Sports Overlay (Placar e Cronômetro) - Only shown for cameras and commercials */}
                         {status.current_source_type !== 'web' && (isScoreboardEnabled || isTimerEnabled) && (
-                          <div className="absolute top-4 left-4 z-40 flex items-center select-none scale-[0.6] sm:scale-75 md:scale-90 lg:scale-100 origin-top-left pointer-events-none drop-shadow-lg font-sans">
+                          <div className="absolute top-4 left-4 z-40 flex items-center select-none scale-[0.3] sm:scale-[0.38] md:scale-[0.45] lg:scale-[0.5] origin-top-left pointer-events-none drop-shadow-lg font-sans">
                             {isScoreboardEnabled && (
                               <div className="flex bg-[#0f1117]/95 border-l-4 border-amber-500 rounded-l-md px-4 py-2 h-[42px] items-center gap-3 w-[280px] sm:w-[320px] md:w-[360px] justify-between">
                                 {/* Team A */}
@@ -1342,7 +1410,7 @@ export default function App() {
                     {/* Toggles Principais */}
                     <div className="grid grid-cols-2 gap-3">
                       <button
-                        onClick={() => setIsScoreboardEnabled(!isScoreboardEnabled)}
+                        onClick={() => updateSportsState({ scoreboard_enabled: !isScoreboardEnabled })}
                         className={`p-3 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1.5 ${isScoreboardEnabled ? 'bg-amber-500/10 border-amber-500 text-amber-500' : 'bg-black/20 border-white/5 text-white/40 hover:border-white/10'}`}
                       >
                         <span className="text-[10px] uppercase font-mono tracking-wider opacity-60">Modo Placar</span>
@@ -1350,7 +1418,7 @@ export default function App() {
                       </button>
 
                       <button
-                        onClick={() => setIsTimerEnabled(!isTimerEnabled)}
+                        onClick={() => updateSportsState({ timer_enabled: !isTimerEnabled })}
                         className={`p-3 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1.5 ${isTimerEnabled ? 'bg-amber-500/10 border-amber-500 text-amber-500' : 'bg-black/20 border-white/5 text-white/40 hover:border-white/10'}`}
                       >
                         <span className="text-[10px] uppercase font-mono tracking-wider opacity-60">Modo Cronômetro</span>
@@ -1372,6 +1440,13 @@ export default function App() {
                                   type="text"
                                   value={teamAName}
                                   onChange={(e) => setTeamAName(e.target.value)}
+                                  onBlur={() => updateSportsState({ team_a_name: teamAName })}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      updateSportsState({ team_a_name: teamAName });
+                                      (e.target as HTMLInputElement).blur();
+                                    }
+                                  }}
                                   className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-bold"
                                   placeholder="TIME A"
                                 />
@@ -1379,14 +1454,14 @@ export default function App() {
                             
                             <div className="flex items-center justify-between gap-1">
                               <button
-                                onClick={() => setScoreA(prev => Math.max(0, prev - 1))}
+                                onClick={() => updateSportsState({ score_a: Math.max(0, scoreA - 1) })}
                                 className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white flex items-center justify-center font-bold text-sm transition-all"
                               >
                                 -
                               </button>
                               <span className="font-mono text-xl font-extrabold text-white">{scoreA}</span>
                               <button
-                                onClick={() => setScoreA(prev => prev + 1)}
+                                onClick={() => updateSportsState({ score_a: scoreA + 1 })}
                                 className="w-8 h-8 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold text-sm transition-all"
                               >
                                 +
@@ -1402,6 +1477,13 @@ export default function App() {
                                   type="text"
                                   value={teamBName}
                                   onChange={(e) => setTeamBName(e.target.value)}
+                                  onBlur={() => updateSportsState({ team_b_name: teamBName })}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      updateSportsState({ team_b_name: teamBName });
+                                      (e.target as HTMLInputElement).blur();
+                                    }
+                                  }}
                                   className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-bold"
                                   placeholder="TIME B"
                                 />
@@ -1409,14 +1491,14 @@ export default function App() {
                             
                             <div className="flex items-center justify-between gap-1">
                               <button
-                                onClick={() => setScoreB(prev => Math.max(0, prev - 1))}
+                                onClick={() => updateSportsState({ score_b: Math.max(0, scoreB - 1) })}
                                 className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white flex items-center justify-center font-bold text-sm transition-all"
                               >
                                 -
                               </button>
                               <span className="font-mono text-xl font-extrabold text-white">{scoreB}</span>
                               <button
-                                onClick={() => setScoreB(prev => prev + 1)}
+                                onClick={() => updateSportsState({ score_b: scoreB + 1 })}
                                 className="w-8 h-8 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold text-sm transition-all"
                               >
                                 +
@@ -1440,7 +1522,7 @@ export default function App() {
                         {/* Botões de Ação do Cronômetro */}
                         <div className="flex gap-2">
                           <button
-                            onClick={() => setIsTimerRunning(!isTimerRunning)}
+                            onClick={() => updateSportsState({ timer_running: !isTimerRunning })}
                             className={`flex-1 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${isTimerRunning ? 'bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20' : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'}`}
                           >
                             {isTimerRunning ? <Pause size={14} /> : <Play size={14} />}
@@ -1449,8 +1531,7 @@ export default function App() {
 
                           <button
                             onClick={() => {
-                              setIsTimerRunning(false);
-                              setTimerSeconds(0);
+                              updateSportsState({ timer_running: false, timer_seconds: 0 });
                             }}
                             className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 font-semibold text-xs transition-all flex items-center justify-center gap-1.5"
                           >
@@ -1462,19 +1543,19 @@ export default function App() {
                         {/* Ajuste Rápido de Minutos */}
                         <div className="grid grid-cols-3 gap-1.5 text-center font-bold">
                           <button
-                            onClick={() => setTimerSeconds(prev => Math.max(0, prev - 60))}
+                            onClick={() => updateSportsState({ timer_seconds: Math.max(0, timerSeconds - 60) })}
                             className="py-1.5 rounded-lg bg-black/40 hover:bg-black/60 border border-white/5 text-[10px] font-mono text-white/60 transition-all font-bold"
                           >
                             - 1 Min
                           </button>
                           <button
-                            onClick={() => setTimerSeconds(prev => prev + 60)}
+                            onClick={() => updateSportsState({ timer_seconds: timerSeconds + 60 })}
                             className="py-1.5 rounded-lg bg-[#EAB308]/10 hover:bg-[#EAB308]/20 border border-[#EAB308]/20 text-[10px] font-mono text-[#EAB308] transition-all font-bold"
                           >
                             + 1 Min
                           </button>
                           <button
-                            onClick={() => setTimerSeconds(prev => prev + 300)}
+                            onClick={() => updateSportsState({ timer_seconds: timerSeconds + 300 })}
                             className="py-1.5 rounded-lg bg-[#EAB308]/10 hover:bg-[#EAB308]/20 border border-[#EAB308]/20 text-[10px] font-mono text-[#EAB308] transition-all font-bold"
                           >
                             + 5 Min
@@ -1496,6 +1577,13 @@ export default function App() {
                                   const s = timerSeconds % 60;
                                   setTimerSeconds(m * 60 + s);
                                 }}
+                                onBlur={() => updateSportsState({ timer_seconds: timerSeconds })}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    updateSportsState({ timer_seconds: timerSeconds });
+                                    (e.target as HTMLInputElement).blur();
+                                  }
+                                }}
                                 className="w-full text-center bg-black/40 border border-white/10 rounded-lg py-1 text-xs text-white focus:outline-none focus:border-amber-500 font-mono font-bold"
                                 placeholder="Min"
                               />
@@ -1512,6 +1600,13 @@ export default function App() {
                                   const m = Math.floor(timerSeconds / 60);
                                   const s = parseInt(e.target.value) || 0;
                                   setTimerSeconds(m * 60 + (s % 60));
+                                }}
+                                onBlur={() => updateSportsState({ timer_seconds: timerSeconds })}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    updateSportsState({ timer_seconds: timerSeconds });
+                                    (e.target as HTMLInputElement).blur();
+                                  }
                                 }}
                                 className="w-full text-center bg-black/40 border border-white/10 rounded-lg py-1 text-xs text-white focus:outline-none focus:border-amber-500 font-mono font-bold"
                                 placeholder="Seg"
