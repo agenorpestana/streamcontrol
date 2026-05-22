@@ -182,20 +182,16 @@ export default function App() {
       console.error("[CLIENTE] Erro ao enviar chunk:", err);
       
       errorCountRef.current++;
+      isSendingChunkRef.current = false;
       
-      if (errorCountRef.current > 10) {
-        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Falha crítica na conexão. Reiniciando broadcast...\n"]);
+      if (errorCountRef.current >= 3) {
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Instabilidade na rede: Falha ao enviar bloco. Pulando bloco para evitar travamento (Fila: ${chunkQueueRef.current.length})...\n`]);
+        chunkQueueRef.current.shift(); // Remove the problematic chunk to avoid getting stuck
         errorCountRef.current = 0;
-        isSendingChunkRef.current = false;
-        chunkQueueRef.current = [];
-        setTimeout(() => {
-          if (isLocalStreamingRef.current) startWebBroadcast();
-        }, 2000);
-      } else {
-        isSendingChunkRef.current = false;
-        // Se houve erro ou timeout, esperamos 1s antes de re-tentar o mesmo bloco de forma sequencial
-        setTimeout(processChunkQueue, 1000);
       }
+      
+      // Retry or process the next chunk with a slight delay
+      setTimeout(processChunkQueue, 1500);
     }
   };
 
@@ -545,6 +541,12 @@ export default function App() {
   };
 
   const startActualRecorder = () => {
+    // Evitar iniciar múltiplos gravadores se já houver um rodando e ativo
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Ignorando startActualRecorder duplicado (gravador já ativo).\n"]);
+      return;
+    }
+
     setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Executando startActualRecorder...\n"]);
     
     // Reset queue and error counters
