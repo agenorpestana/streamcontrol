@@ -230,9 +230,9 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with strictly WebSocket for optimal Cloud Run compatibility and low-latency transfer
+      // Initialize socket with both polling and websocket fallback for supreme compatibility and zero dropouts
       const socket = io(window.location.origin, {
-        transports: ['websocket'],
+        transports: ['polling', 'websocket'],
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
@@ -344,7 +344,7 @@ export default function App() {
 
         // Draw Camera PiP
         if (cameraStream && cameraVideoRef.current && cameraVideoRef.current.readyState >= 2) {
-          const pipWidth = canvasRef.current.width / 4;
+          const pipWidth = canvasRef.current.width / 5.2; // Slightly smaller camera frame size (approx 19.2% width instead of 25%)
           const videoRatio = cameraVideoRef.current.videoHeight / cameraVideoRef.current.videoWidth || 0.75;
           const pipHeight = videoRatio * pipWidth;
           let x = 20, y = 20;
@@ -363,6 +363,16 @@ export default function App() {
           ctx.drawImage(cameraVideoRef.current, x, y, pipWidth, pipHeight);
         }
       };
+
+      // Native animation loop for smooth, stutter-free compositor drawing when the tab is visible
+      const renderLoop = () => {
+        if (!active) return;
+        if (!document.hidden) {
+          draw();
+        }
+        animationFrameRef.current = requestAnimationFrame(renderLoop);
+      };
+      animationFrameRef.current = requestAnimationFrame(renderLoop);
 
       // Inline Worker to tick dynamically even when minimized/active tab is backgrounded
       try {
@@ -387,20 +397,13 @@ export default function App() {
         worker = new Worker(workerUrl);
         
         worker.onmessage = () => {
-          if (active) {
-            requestAnimationFrame(draw);
+          if (active && document.hidden) {
+            draw(); // Draw directly to the canvas in the background on worker tick
           }
         };
         worker.postMessage('start');
       } catch (err) {
-        console.warn("Could not start Web Worker background loop. Falling back to simple requestAnimationFrame.", err);
-        const fallbackLoop = () => {
-          if (active) {
-            draw();
-            animationFrameRef.current = requestAnimationFrame(fallbackLoop);
-          }
-        };
-        fallbackLoop();
+        console.warn("Could not start Web Worker background loop. Relying on renderLoop only.", err);
       }
     } else {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
@@ -644,7 +647,12 @@ export default function App() {
       }
       
       setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Capturando stream do canvas (25 FPS)...\n"]);
-      const stream = canvasRef.current.captureStream(25);
+      const canvasStream = canvasRef.current.captureStream(25);
+      const videoTrack = canvasStream.getVideoTracks()[0];
+      const streamTracks: MediaStreamTrack[] = [];
+      if (videoTrack) {
+        streamTracks.push(videoTrack);
+      }
       
       // Determine if visual/screen or camera already has a microphone/audio tract
       let audioTrack = screenStream?.getAudioTracks()[0] || cameraStream?.getAudioTracks()[0];
@@ -667,7 +675,7 @@ export default function App() {
       }
       
       if (audioTrack) {
-        stream.addTrack(audioTrack);
+        streamTracks.push(audioTrack);
       } else {
         // Create silent audio track if none exists
         const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -679,9 +687,14 @@ export default function App() {
         gain.connect(dst);
         oscillator.start();
         const silentTrack = dst.stream.getAudioTracks()[0];
-        stream.addTrack(silentTrack);
+        if (silentTrack) {
+          streamTracks.push(silentTrack);
+        }
       }
 
+      // Combine video and audio tracks from scratch to force browser to include both streams into the MediaRecorder container
+      const combinedStream = new MediaStream(streamTracks);
+      
       const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=h264,opus')
         ? 'video/webm;codecs=h264,opus'
         : MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus') 
@@ -691,7 +704,7 @@ export default function App() {
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Usando mimeType: ${mimeType}\n`]);
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Bitrate: 2500kbps (Recomendado pelo YouTube)\n`]);
 
-      const recorder = new MediaRecorder(stream, {
+      const recorder = new MediaRecorder(combinedStream, {
         mimeType,
         videoBitsPerSecond: 2500000, // Increased to match YouTube recommendation
         audioBitsPerSecond: 128000
@@ -721,7 +734,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(1000); // 1.0-second chunks for fast start, supreme responsiveness and ultra-low lag
+      recorder.start(2000); // 2.0-second chunking for superb bandwidth balance and stable keyframes
       mediaRecorderRef.current = recorder;
     }, 500);
   };
