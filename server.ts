@@ -218,7 +218,6 @@ async function startServer() {
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"];
       } else if (type === "web") {
         inputArgs = [
-          "-re", // Read incoming piped webm stream at real-time native speed to ensure smooth steady streaming to YouTube
           "-use_wallclock_as_timestamps", "1",
           "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
           "-thread_queue_size", "16384",
@@ -233,6 +232,7 @@ async function startServer() {
       const rtmpUrl = `rtmp://a.rtmp.youtube.com/live2/${youtubeKey}`;
       const args = [
         ...inputArgs,
+        "-vf", "fps=25,format=yuv420p",
         "-c:v", "libx264",
         "-preset", "ultrafast",
         "-tune", "zerolatency",
