@@ -78,7 +78,7 @@ async function startServer() {
       origin: "*",
       methods: ["GET", "POST"]
     },
-    transports: ['websocket'], // Force websocket to avoid polling "server error" noise
+    transports: ['polling', 'websocket'], // Allow both polling and websocket to match the client settings and minimize connection timeouts
     pingTimeout: 60000,
     pingInterval: 25000,
     maxHttpBufferSize: 1e8
@@ -218,11 +218,12 @@ async function startServer() {
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"];
       } else if (type === "web") {
         inputArgs = [
+          "-re", // Read incoming piped webm stream at real-time native speed to ensure smooth steady streaming to YouTube
           "-use_wallclock_as_timestamps", "1",
           "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
           "-thread_queue_size", "16384",
-          "-probesize", "1M", // Reduced for faster start
-          "-analyzeduration", "1M", // Reduced for faster start
+          "-probesize", "5M", // Balanced for fast start but stable track metadata detection
+          "-analyzeduration", "5M", // Balanced analyzeduration
           "-f", "webm",
           "-i", "pipe:0"
         ];

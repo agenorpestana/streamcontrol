@@ -299,9 +299,10 @@ export default function App() {
     }
   }, [isMicEnabled, cameraStream, screenStream]);
 
-  // Compositor Loop
+  // Compositor Loop with Web Worker fallback to prevent background throttling in browsers
   useEffect(() => {
     let active = true;
+    let worker: Worker | null = null;
 
     if ((screenStream || cameraStream) && canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d', { alpha: false });
@@ -339,11 +340,44 @@ export default function App() {
           ctx.strokeRect(x, y, pipWidth, pipHeight);
           ctx.drawImage(cameraVideoRef.current, x, y, pipWidth, pipHeight);
         }
-
-        animationFrameRef.current = requestAnimationFrame(draw);
       };
 
-      draw();
+      // Inline Worker to tick dynamically even when minimized/active tab is backgrounded
+      try {
+        const workerCode = `
+          let timer = null;
+          self.onmessage = function(e) {
+            if (e.data === 'start') {
+              if (timer) clearInterval(timer);
+              timer = setInterval(() => {
+                self.postMessage('tick');
+              }, 40); // 25 frames per second
+            } else if (e.data === 'stop') {
+              if (timer) {
+                clearInterval(timer);
+                timer = null;
+              }
+            }
+          };
+        `;
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const workerUrl = URL.createObjectURL(blob);
+        worker = new Worker(workerUrl);
+        
+        worker.onmessage = () => {
+          if (active) draw();
+        };
+        worker.postMessage('start');
+      } catch (err) {
+        console.warn("Could not start Web Worker background loop. Falling back to simple requestAnimationFrame.", err);
+        const fallbackLoop = () => {
+          if (active) {
+            draw();
+            animationFrameRef.current = requestAnimationFrame(fallbackLoop);
+          }
+        };
+        fallbackLoop();
+      }
     } else {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
       // Clear canvas if no streams
@@ -355,6 +389,10 @@ export default function App() {
 
     return () => {
       active = false;
+      if (worker) {
+        worker.postMessage('stop');
+        worker.terminate();
+      }
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
@@ -635,7 +673,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(2500); // 2.5-second chunks for excellent stability and low connection overhead
+      recorder.start(1500); // 1.5-second chunks for fast start, excellent stability and low connection overhead
       mediaRecorderRef.current = recorder;
     }, 500);
   };
