@@ -109,6 +109,7 @@ export default function App() {
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [isMicEnabled, setIsMicEnabled] = useState(true);
+  const [requestAudioWithCamera, setRequestAudioWithCamera] = useState(true);
   const [isLocalStreaming, setIsLocalStreaming] = useState(false);
   const isLocalStreamingRef = useRef(false);
   
@@ -146,8 +147,7 @@ export default function App() {
           'Authorization': `Bearer ${token}`
         },
         body: buffer,
-        signal: controller.signal,
-        keepalive: true // Reusa a conexão TCP persistente para diminuir o overhead de rede
+        signal: controller.signal
       });
 
       clearTimeout(timeoutId);
@@ -214,7 +214,7 @@ export default function App() {
       
       // Initialize socket with standard settings for better compatibility
       const socket = io(window.location.origin, {
-        transports: ['websocket'], // Force websocket to avoid polling issues
+        transports: ['polling', 'websocket'], // Use polling first, then upgrade to websocket
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
@@ -502,15 +502,26 @@ export default function App() {
 
   const startCamera = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: true, 
+        audio: requestAudioWithCamera 
+      });
       setCameraStream(stream);
+      // Sincronizar estado inicial de mutar/desmutar o áudio do microfone
+      stream.getAudioTracks().forEach(track => {
+        track.enabled = isMicEnabled;
+      });
     } catch (e) {
-      console.warn("Erro ao acessar câmera com áudio, tentando apenas vídeo:", e);
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        setCameraStream(stream);
-      } catch (e2) {
-        console.error("Erro ao acessar câmera:", e2);
+      if (requestAudioWithCamera) {
+        console.warn("Erro ao acessar câmera com áudio, tentando apenas vídeo:", e);
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          setCameraStream(stream);
+        } catch (e2) {
+          console.error("Erro ao acessar câmera:", e2);
+        }
+      } else {
+        console.error("Erro ao acessar câmera:", e);
       }
     }
   };
@@ -536,9 +547,10 @@ export default function App() {
   const startActualRecorder = () => {
     setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Executando startActualRecorder...\n"]);
     
-    // Reset queue
+    // Reset queue and error counters
     chunkQueueRef.current = [];
     isSendingChunkRef.current = false;
+    errorCountRef.current = 0;
 
     // Stop any existing recorder first
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -1353,6 +1365,22 @@ export default function App() {
                           <p className="text-xs opacity-60">Webcam do Computador</p>
                         </div>
                       </button>
+                      
+                      {!cameraStream && (
+                        <div className="flex items-center justify-center gap-2 mt-2 bg-black/20 py-2 px-4 rounded-xl border border-white/5">
+                          <input 
+                            type="checkbox" 
+                            id="mic-with-cam"
+                            checked={requestAudioWithCamera}
+                            onChange={(e) => setRequestAudioWithCamera(e.target.checked)}
+                            className="rounded bg-[#1e2025] border-white/10 text-emerald-500 focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                          />
+                          <label htmlFor="mic-with-cam" className="text-[10px] font-mono uppercase tracking-wider text-white/40 cursor-pointer select-none">
+                            Capturar microfone junto
+                          </label>
+                        </div>
+                      )}
+
                       {cameraStream && (
                         <button 
                           onClick={() => {
