@@ -20,11 +20,30 @@ if (!fs.existsSync(fontPath)) {
     response.pipe(fontFile);
     fontFile.on("finish", () => {
       fontFile.close();
-      console.log("Fonte TTF baixada e salva com sucesso.");
+      try {
+        const stats = fs.statSync(fontPath);
+        if (stats.size < 1000) {
+          console.error("Fonte baixada é muito pequena ou inválida, removendo...");
+          fs.unlinkSync(fontPath);
+        } else {
+          console.log("Fonte TTF baixada e salva com sucesso.");
+        }
+      } catch (err) {
+        console.error("Erro ao validar tamanho da fonte:", err);
+      }
     });
   }).on("error", (err) => {
     console.error("Erro ao baixar fonte TTF:", err.message);
+    try { fontFile.close(); fs.unlinkSync(fontPath); } catch (ex) {}
   });
+} else {
+  try {
+    const stats = fs.statSync(fontPath);
+    if (stats.size < 1000) {
+      console.log("Removendo arquivo de fonte inválido ou corrompido...");
+      fs.unlinkSync(fontPath);
+    }
+  } catch (e) {}
 }
 
 const writeSportsFiles = (status: any) => {
@@ -321,7 +340,8 @@ async function startServer() {
       if ((type === "camera" || type === "video") && (db.stream_status.scoreboard_enabled || db.stream_status.timer_enabled)) {
         writeSportsFiles(db.stream_status);
         
-        const fontFileOpt = fs.existsSync(fontPath) ? `:fontfile='${fontPath}'` : "";
+        const escFontPath = fontPath.replace(/\\/g, "/").replace(/:/g, "\\:");
+        const fontFileOpt = fs.existsSync(fontPath) && fs.statSync(fontPath).size > 1000 ? `:fontfile='${escFontPath}'` : "";
         let sportsFilters = [];
         
         if (db.stream_status.scoreboard_enabled) {
@@ -330,30 +350,31 @@ async function startServer() {
           // Yellow neon border on the left
           sportsFilters.push("drawbox=x=40:y=40:w=4:h=42:color=0xEAB308:t=fill");
           
-          // Team A Name (drawn to the left of Team A score, right-aligned relative to 140)
-          sportsFilters.push(`drawtext=textfile=teama.txt:reload=1:x=140-w:y=52:fontcolor=white:fontsize=15${fontFileOpt}`);
-          // Score A Box & value
-          sportsFilters.push(`drawtext=textfile=scorea.txt:reload=1:x=152:y=50:fontcolor=white:fontsize=18:box=1:boxcolor=white@0.12:boxborderw=6${fontFileOpt}`);
+          // Team A Name (drawn at fixed left position x=75, y=52, left-aligned)
+          sportsFilters.push(`drawtext=textfile=teama.txt:reload=1:x=75:y=52:fontcolor=white:fontsize=15${fontFileOpt}`);
+          // Score A Box & value (fixed x=160, y=50)
+          sportsFilters.push(`drawtext=textfile=scorea.txt:reload=1:x=160:y=50:fontcolor=white:fontsize=18:box=1:boxcolor=white@0.12:boxborderw=4${fontFileOpt}`);
           
           // Visual Divider
-          sportsFilters.push(`drawtext=text='-':x=196:y=52:fontcolor=white@0.4:fontsize=16${fontFileOpt}`);
+          sportsFilters.push(`drawtext=text='-':x=198:y=52:fontcolor=white@0.4:fontsize=16${fontFileOpt}`);
           
-          // Score B Box & value
-          sportsFilters.push(`drawtext=textfile=scoreb.txt:reload=1:x=214:y=50:fontcolor=white:fontsize=18:box=1:boxcolor=white@0.12:boxborderw=6${fontFileOpt}`);
-          // Team B Name (drawn to the right of Score B)
-          sportsFilters.push(`drawtext=textfile=teamb.txt:reload=1:x=246:y=52:fontcolor=white:fontsize=15${fontFileOpt}`);
+          // Score B Box & value (fixed x=224, y=50)
+          sportsFilters.push(`drawtext=textfile=scoreb.txt:reload=1:x=224:y=50:fontcolor=white:fontsize=18:box=1:boxcolor=white@0.12:boxborderw=4${fontFileOpt}`);
+          // Team B Name (drawn at fixed position x=265, y=52)
+          sportsFilters.push(`drawtext=textfile=teamb.txt:reload=1:x=265:y=52:fontcolor=white:fontsize=15${fontFileOpt}`);
         }
         
         if (db.stream_status.timer_enabled) {
           if (db.stream_status.scoreboard_enabled) {
-            // Attached timer block on the right (x=40+320+6=366, width:80, height:42)
+            // Attached timer block on the right (x=366, width:80, height:42)
             sportsFilters.push("drawbox=x=366:y=40:w=80:h=42:color=0xEAB308:t=fill");
-            // Timer text (drawn on the yellow box)
-            sportsFilters.push(`drawtext=textfile=timer.txt:reload=1:x=406-w/2:y=51:fontcolor=black:fontsize=16${fontFileOpt}`);
+            // Timer text (drawn on the yellow box, centered around 406 - starting at 384)
+            sportsFilters.push(`drawtext=textfile=timer.txt:reload=1:x=384:y=52:fontcolor=black:fontsize=16${fontFileOpt}`);
           } else {
             // Standalone timer block (x=40, width:90, height:42)
             sportsFilters.push("drawbox=x=40:y=40:w=90:h=42:color=0xEAB308:t=fill");
-            sportsFilters.push(`drawtext=textfile=timer.txt:reload=1:x=85-w/2:y=51:fontcolor=black:fontsize=17${fontFileOpt}`);
+            // Timer text (centered around 85 - starting at 63)
+            sportsFilters.push(`drawtext=textfile=timer.txt:reload=1:x=63:y=52:fontcolor=black:fontsize=17${fontFileOpt}`);
           }
         }
         
