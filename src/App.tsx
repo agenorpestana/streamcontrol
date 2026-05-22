@@ -26,7 +26,7 @@ interface StreamStatus {
   loop_video: boolean;
 }
 
-const CameraPreview = ({ camId, className }: { camId: number, className?: string }) => {
+const CameraPreview = ({ camId, className, isLive = false }: { camId: number, className?: string, isLive?: boolean }) => {
   const token = localStorage.getItem('token');
   const getSnapshotUrl = () => `/api/cameras/${camId}/snapshot?token=${token}&t=${Date.now()}`;
   const [src, setSrc] = useState(getSnapshotUrl());
@@ -39,11 +39,14 @@ const CameraPreview = ({ camId, className }: { camId: number, className?: string
     setLoading(true);
     setError(false);
 
+    // Active/Live preview gets a 2s interval, grid cards get a 5s interval to protect CPU/connections
+    const pollInterval = isLive ? 2000 : 5000;
+
     const interval = setInterval(() => {
       setSrc(getSnapshotUrl());
-    }, 1000); 
+    }, pollInterval); 
     return () => clearInterval(interval);
-  }, [camId, token]);
+  }, [camId, token, isLive]);
 
   const refresh = () => {
     setLoading(true);
@@ -121,26 +124,6 @@ export default function App() {
     isSendingChunkRef.current = true;
     const buffer = chunkQueueRef.current[0]; // Peek first chunk
 
-    // If socket is connected, prefer socket for lower overhead
-    if (socketRef.current && socketRef.current.connected) {
-      try {
-        socketRef.current.emit('web_data', buffer);
-        chunkQueueRef.current.shift(); // Remove from queue after emit
-        
-        if (Math.random() < 0.1) {
-          setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Chunk enviado via Socket (Fila: ${chunkQueueRef.current.length})\n`]);
-        }
-        
-        isSendingChunkRef.current = false;
-        setTimeout(processChunkQueue, 10);
-        return;
-      } catch (err) {
-        console.error("[CLIENTE] Erro ao emitir via socket:", err);
-        // Fallback to POST below
-      }
-    }
-
-    // Fallback to HTTP POST if socket is disconnected or failed
     const token = localStorage.getItem('token');
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 15000);
@@ -178,7 +161,7 @@ export default function App() {
       errorCountRef.current = 0;
       
       if (Math.random() < 0.1) {
-        setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Chunk enviado via POST (Fila: ${chunkQueueRef.current.length})\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Transmissão local: Bloco de vídeo enviado (Fila: ${chunkQueueRef.current.length})\n`]);
       }
       
       isSendingChunkRef.current = false;
@@ -199,7 +182,7 @@ export default function App() {
         }, 2000);
       } else {
         isSendingChunkRef.current = false;
-        // If it's a timeout or network error, wait a bit before retrying the same chunk
+        // Se houve erro ou timeout, esperamos 1s antes de re-tentar o mesmo bloco de forma sequencial
         setTimeout(processChunkQueue, 1000);
       }
     }
@@ -297,12 +280,14 @@ export default function App() {
 
   // Compositor Loop
   useEffect(() => {
+    let active = true;
+
     if ((screenStream || cameraStream) && canvasRef.current) {
       const ctx = canvasRef.current.getContext('2d', { alpha: false });
       if (!ctx) return;
 
       const draw = () => {
-        if (!ctx || !canvasRef.current) return;
+        if (!active || !ctx || !canvasRef.current) return;
         
         // Clear
         ctx.fillStyle = '#000';
@@ -346,6 +331,13 @@ export default function App() {
         ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
       }
     }
+
+    return () => {
+      active = false;
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
   }, [screenStream, cameraStream, pipPosition]);
 
   const fetchData = async () => {
@@ -428,6 +420,20 @@ export default function App() {
         throw new Error(`Erro na API: ${response.statusText}`);
       }
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] API respondeu com sucesso.\n`]);
+      
+      // Se trocamos para web/local, ativamos um gatilho de seguranca
+      // caso o evento socket 'server_ready_for_web' nao seja recebido (ex: socket bloqueado/desconectado)
+      if (type === 'web' && id === 'local') {
+        setTimeout(() => {
+          if (isLocalStreamingRef.current) {
+            const hasStarted = mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive';
+            if (!hasStarted) {
+              setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Gatilho de segurança: Sinal Socket ausente. Iniciando gravação via fallback de rede...\n"]);
+              startActualRecorder();
+            }
+          }
+        }, 2500);
+      }
     } catch (error: any) {
       setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NA TROCA DE STREAM: ${error.message}\n`]);
     } finally {
@@ -590,7 +596,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(4000); // 4 second chunks for better stability
+      recorder.start(1000); // 1-second chunks for fast start and minimized latency
       mediaRecorderRef.current = recorder;
     }, 500);
   };
@@ -925,7 +931,7 @@ export default function App() {
                           </div>
                         ) : status.current_source_type === 'camera' ? (
                           <div className="w-full h-full relative">
-                            <CameraPreview camId={status.current_source_id as number} className="w-full h-full object-contain" />
+                            <CameraPreview camId={status.current_source_id as number} className="w-full h-full object-contain" isLive={true} />
                             <div className="absolute inset-0 bg-black/20 pointer-events-none" />
                             <div className="absolute bottom-4 left-4 flex items-center gap-2">
                               <Activity className="w-4 h-4 text-emerald-500 animate-pulse" />

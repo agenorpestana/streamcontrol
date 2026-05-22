@@ -391,10 +391,61 @@ async function startServer() {
     res.json(getDb().cameras);
   });
 
+  interface SnapshotCacheItem {
+    data: Buffer;
+    timestamp: number;
+    isFetching: boolean;
+    pendingResolvers: ((buf: Buffer | null) => void)[];
+  }
+  const snapshotCaches: Record<number, SnapshotCacheItem> = {};
+
   app.get("/api/cameras/:id/snapshot", authenticate, (req, res) => {
     const db = getDb();
-    const cam = db.cameras.find((c: any) => c.id === parseInt(req.params.id));
+    const camId = parseInt(req.params.id);
+    const cam = db.cameras.find((c: any) => c.id === camId);
     if (!cam) return res.status(404).json({ error: "Câmera não encontrada" });
+
+    if (!snapshotCaches[camId]) {
+      snapshotCaches[camId] = {
+        data: Buffer.alloc(0),
+        timestamp: 0,
+        isFetching: false,
+        pendingResolvers: []
+      };
+    }
+
+    const cache = snapshotCaches[camId];
+    const now = Date.now();
+    const CACHE_TTL = 1500; // 1.5 seconds cache TTL
+
+    const deliverBuffer = (buf: Buffer | null) => {
+      if (res.headersSent) return;
+      if (buf && buf.length > 0) {
+        res.setHeader("Content-Type", "image/jpeg");
+        res.end(buf);
+      } else {
+        res.status(500).end();
+      }
+    };
+
+    // If cache is valid, serve immediately!
+    if (cache.data.length > 0 && (now - cache.timestamp < CACHE_TTL)) {
+      return deliverBuffer(cache.data);
+    }
+
+    // If already fetching, return stale cache immediately if we have it!
+    // This makes the UI feel ultra smooth and responsive.
+    if (cache.isFetching) {
+      if (cache.data.length > 0) {
+        return deliverBuffer(cache.data);
+      }
+      // If we don't have stale cache, queue the resolver
+      cache.pendingResolvers.push(deliverBuffer);
+      return;
+    }
+
+    // Capture new snapshot
+    cache.isFetching = true;
 
     const args = [
       "-rtsp_transport", "tcp",
@@ -402,35 +453,64 @@ async function startServer() {
       "-analyzeduration", "0",
       "-i", cam.rtsp_url,
       "-frames:v", "1",
-      "-an", // Disable audio for faster snapshot
+      "-an",
       "-f", "image2",
       "-vcodec", "mjpeg",
       "pipe:1"
     ];
 
     const ffmpeg = spawn("ffmpeg", args);
-    
+    const chunks: Buffer[] = [];
+
     const timeout = setTimeout(() => {
       ffmpeg.kill("SIGKILL");
-      if (!res.headersSent) res.status(504).end();
-    }, 4000); // Reduced timeout to 4s
+    }, 4000);
 
-    // Log snapshot errors to the main log buffer for debugging
-    ffmpeg.stderr.on("data", (data) => {
-      const log = data.toString();
-      if (log.includes("Error") || log.includes("failed")) {
-        addLog(`[Snapshot Cam ${cam.id}] ${log}`);
+    ffmpeg.stdout.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+
+    ffmpeg.on("close", (code) => {
+      clearTimeout(timeout);
+      cache.isFetching = false;
+      
+      const resolvers = [...cache.pendingResolvers];
+      cache.pendingResolvers = [];
+
+      if (chunks.length > 0) {
+        const fullBuffer = Buffer.concat(chunks);
+        cache.data = fullBuffer;
+        cache.timestamp = Date.now();
+        
+        deliverBuffer(fullBuffer);
+        resolvers.forEach(r => r(fullBuffer));
+      } else {
+        // Fallback to stale buffer if available
+        if (cache.data.length > 0) {
+          deliverBuffer(cache.data);
+          resolvers.forEach(r => r(cache.data));
+        } else {
+          deliverBuffer(null);
+          resolvers.forEach(r => r(null));
+        }
       }
     });
 
-    ffmpeg.on("close", () => clearTimeout(timeout));
-
-    res.setHeader("Content-Type", "image/jpeg");
-    ffmpeg.stdout.pipe(res);
-    
-    ffmpeg.on("error", () => {
+    ffmpeg.on("error", (err) => {
       clearTimeout(timeout);
-      if (!res.headersSent) res.status(500).end();
+      cache.isFetching = false;
+      
+      const resolvers = [...cache.pendingResolvers];
+      cache.pendingResolvers = [];
+
+      if (cache.data.length > 0) {
+        deliverBuffer(cache.data);
+        resolvers.forEach(r => r(cache.data));
+      } else {
+        console.error("Erro no spawn do ffmpeg para snapshot:", err);
+        deliverBuffer(null);
+        resolvers.forEach(r => r(null));
+      }
     });
   });
 
