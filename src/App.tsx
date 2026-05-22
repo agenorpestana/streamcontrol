@@ -406,131 +406,7 @@ export default function App() {
           ctx.drawImage(cameraVideoRef.current, x, y, pipWidth, pipHeight);
         }
 
-        // Draw Sports Overlay (Placar e Cronômetro) on top-left corner
-        if (scoreboardEnabledRef.current || timerEnabledRef.current) {
-          const startX = 40;
-          const startY = 40;
-          
-          ctx.save();
-          ctx.textBaseline = 'middle';
-          
-          if (scoreboardEnabledRef.current) {
-            const nameA = (teamANameRef.current || "TIME A").toUpperCase();
-            const nameB = (teamBNameRef.current || "TIME B").toUpperCase();
-            const scA = String(scoreARef.current);
-            const scB = String(scoreBRef.current);
-            
-            const barHeight = 42;
-            const barWidth = 380;
-            const radius = 6;
-            
-            // Draw scoreboard background drop shadow
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            ctx.beginPath();
-            ctx.roundRect(startX + 2, startY + 3, barWidth, barHeight, radius);
-            ctx.fill();
-            
-            // Main scoreboard background
-            ctx.fillStyle = 'rgba(15, 17, 23, 0.92)';
-            ctx.beginPath();
-            ctx.roundRect(startX, startY, barWidth, barHeight, radius);
-            ctx.fill();
-            
-            // Accent colored bar on the left side (Sports Neon yellow)
-            ctx.fillStyle = '#EAB308';
-            ctx.beginPath();
-            ctx.roundRect(startX, startY, 4, barHeight, [radius, 0, 0, radius]);
-            ctx.fill();
-            
-            // Team A Name
-            ctx.fillStyle = '#FFFFFF';
-            ctx.textAlign = 'right';
-            ctx.font = '700 15px "Inter", "Segoe UI", sans-serif';
-            ctx.fillText(nameA, startX + 120, startY + barHeight/2);
-            
-            // Score A Box
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-            ctx.beginPath();
-            ctx.roundRect(startX + 130, startY + 5, 36, barHeight - 10, 4);
-            ctx.fill();
-            // Score A text
-            ctx.fillStyle = '#FFFFFF';
-            ctx.textAlign = 'center';
-            ctx.font = '700 18px "JetBrains Mono", monospace';
-            ctx.fillText(scA, startX + 130 + 18, startY + barHeight/2);
-            
-            // Divider (vs)
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-            ctx.fillRect(startX + 172, startY + 11, 2, barHeight - 22);
-            
-            // Score B Box
-            ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
-            ctx.beginPath();
-            ctx.roundRect(startX + 180, startY + 5, 36, barHeight - 10, 4);
-            ctx.fill();
-            // Score B text
-            ctx.fillStyle = '#FFFFFF';
-            ctx.textAlign = 'center';
-            ctx.font = '700 18px "JetBrains Mono", monospace';
-            ctx.fillText(scB, startX + 180 + 18, startY + barHeight/2);
-            
-            // Team B Name
-            ctx.fillStyle = '#FFFFFF';
-            ctx.textAlign = 'left';
-            ctx.font = '700 15px "Inter", "Segoe UI", sans-serif';
-            ctx.fillText(nameB, startX + 226, startY + barHeight/2);
-            
-            // Attached Timer block on the right
-            if (timerEnabledRef.current) {
-              const minutes = Math.floor(timerSecondsRef.current / 60);
-              const seconds = timerSecondsRef.current % 60;
-              const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-              
-              const timerWidth = 90;
-              // Timer Background (Amber / Yellow)
-              ctx.fillStyle = '#EAB308';
-              ctx.beginPath();
-              // rounded only on right sides for attached effect
-              ctx.roundRect(startX + barWidth + 6, startY, timerWidth, barHeight, [0, radius, radius, 0]);
-              ctx.fill();
-              
-              // Timer text
-              ctx.fillStyle = '#000000';
-              ctx.textAlign = 'center';
-              ctx.font = '700 17px "JetBrains Mono", monospace';
-              ctx.fillText(timeStr, startX + barWidth + 6 + (timerWidth / 2), startY + barHeight/2);
-            }
-          } else if (timerEnabledRef.current) {
-            // Only Timer is enabled, draw independent elegant block
-            const minutes = Math.floor(timerSecondsRef.current / 60);
-            const seconds = timerSecondsRef.current % 60;
-            const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-            
-            const barHeight = 42;
-            const barWidth = 100;
-            const radius = 6;
-            
-            // Background shadow
-            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            ctx.beginPath();
-            ctx.roundRect(startX + 1, startY + 3, barWidth, barHeight, radius);
-            ctx.fill();
-            
-            // Timer background (Amber / Yellow)
-            ctx.fillStyle = '#EAB308';
-            ctx.beginPath();
-            ctx.roundRect(startX, startY, barWidth, barHeight, radius);
-            ctx.fill();
-            
-            // Timer text
-            ctx.fillStyle = '#000000';
-            ctx.textAlign = 'center';
-            ctx.font = '700 18px "JetBrains Mono", monospace';
-            ctx.fillText(timeStr, startX + (barWidth / 2), startY + barHeight/2);
-          }
-          
-          ctx.restore();
-        }
+        // Sports overlay drawing removed from local compositor loop since it is now implemented as an elegant floating HTML element over cameras and commercials in the control panel
       };
 
       // Native animation loop for smooth, stutter-free compositor drawing when the tab is visible
@@ -1277,6 +1153,40 @@ export default function App() {
                             </span>
                           )}
                         </div>
+
+                        {/* Sports Overlay (Placar e Cronômetro) - Only shown for cameras and commercials */}
+                        {status.current_source_type !== 'web' && (isScoreboardEnabled || isTimerEnabled) && (
+                          <div className="absolute top-4 left-4 z-40 flex items-center select-none scale-[0.6] sm:scale-75 md:scale-90 lg:scale-100 origin-top-left pointer-events-none drop-shadow-lg font-sans">
+                            {isScoreboardEnabled && (
+                              <div className="flex bg-[#0f1117]/95 border-l-4 border-amber-500 rounded-l-md px-4 py-2 h-[42px] items-center gap-3 w-[280px] sm:w-[320px] md:w-[360px] justify-between">
+                                {/* Team A */}
+                                <span className="text-white font-bold text-xs md:text-sm tracking-wide uppercase truncate text-right flex-1 select-none pr-1">
+                                  {teamAName || "TIME A"}
+                                </span>
+                                {/* Score A Box */}
+                                <div className="bg-white/10 rounded px-2 md:px-2.5 py-0.5 min-w-[28px] md:min-w-[32px] text-center font-mono font-extrabold text-white text-xs md:text-base select-none">
+                                  {scoreA}
+                                </div>
+                                {/* Divider */}
+                                <div className="h-5 w-[1px] bg-white/20 select-none" />
+                                {/* Score B Box */}
+                                <div className="bg-white/10 rounded px-2 md:px-2.5 py-0.5 min-w-[28px] md:min-w-[32px] text-center font-mono font-extrabold text-white text-xs md:text-base select-none">
+                                  {scoreB}
+                                </div>
+                                {/* Team B */}
+                                <span className="text-white font-bold text-xs md:text-sm tracking-wide uppercase truncate text-left flex-1 select-none pl-1">
+                                  {teamBName || "TIME B"}
+                                </span>
+                              </div>
+                            )}
+
+                            {isTimerEnabled && (
+                              <div className={`font-mono font-extrabold text-xs md:text-base px-3 md:px-4 py-2 h-[42px] flex items-center justify-center min-w-[65px] md:min-w-[80px] text-black bg-amber-500 ${isScoreboardEnabled ? 'rounded-r-md' : 'rounded-md'}`}>
+                                {String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:{String(timerSeconds % 60).padStart(2, '0')}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="text-center p-10">
