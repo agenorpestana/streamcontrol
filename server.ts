@@ -78,7 +78,7 @@ async function startServer() {
       origin: "*",
       methods: ["GET", "POST"]
     },
-    transports: ['polling', 'websocket'], // Allow both polling and websocket to match the client settings and minimize connection timeouts
+    transports: ['websocket'], // Force WebSocket transport on Cloud Run to bypass serverless long-polling sticky session issues
     pingTimeout: 60000,
     pingInterval: 25000,
     maxHttpBufferSize: 1e8

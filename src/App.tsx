@@ -123,11 +123,11 @@ export default function App() {
   const processChunkQueue = async () => {
     if (isSendingChunkRef.current || chunkQueueRef.current.length === 0 || !isLocalStreamingRef.current) return;
     
-    // Se a fila acumulou por instabilidade ou lentidão na rede, limpamos os blocos acumulados
-    // para recuperar a sincronia e manter a transmissão sempre em tempo real.
-    if (chunkQueueRef.current.length > 4) {
-      setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Instabilidade de rede detectada (Fila: ${chunkQueueRef.current.length}). Descartando blocos antigos para recuperar tempo real...\n`]);
-      chunkQueueRef.current = chunkQueueRef.current.slice(-2);
+    // WebM is a continuous stream, so we should avoid discarding packets unless absolutely necessary.
+    // However, if the network is extremely slow and the queue grows excessively (e.g., > 15 chunks), we can trim it.
+    if (chunkQueueRef.current.length > 15) {
+      setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Engarrafamento grave de rede (Fila: ${chunkQueueRef.current.length}). Limpando buffer para re-sincronizar...\n`]);
+      chunkQueueRef.current = chunkQueueRef.current.slice(-3);
     }
 
     if (chunkQueueRef.current.length === 0) return;
@@ -135,6 +135,28 @@ export default function App() {
     isSendingChunkRef.current = true;
     const buffer = chunkQueueRef.current[0]; // Peek first chunk
 
+    // Prefer Socket.io if connected. Direct binary transfer is extremely fast & smooth!
+    if (socketConnected && socketRef.current && socketRef.current.connected) {
+      try {
+        socketRef.current.emit("web_data", buffer);
+        
+        // Success! Remove from queue and schedule next
+        chunkQueueRef.current.shift();
+        errorCountRef.current = 0;
+        isSendingChunkRef.current = false;
+        
+        if (Math.random() < 0.1) {
+          setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Bloco enviado via Socket (Fila: ${chunkQueueRef.current.length})\n`]);
+        }
+        
+        setTimeout(processChunkQueue, 10);
+        return;
+      } catch (err: any) {
+        console.warn("[CLIENTE] Erro ao emitir via Socket, tentando POST fallback:", err);
+      }
+    }
+
+    // Fallback: POST Request
     const token = localStorage.getItem('token');
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 12000);
@@ -172,32 +194,32 @@ export default function App() {
       errorCountRef.current = 0;
       
       if (Math.random() < 0.1) {
-        setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Transmissão local: Bloco de vídeo enviado (Fila: ${chunkQueueRef.current.length})\n`]);
+        setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Bloco enviado via Fallback POST (Fila: ${chunkQueueRef.current.length})\n`]);
       }
       
       isSendingChunkRef.current = false;
-      setTimeout(processChunkQueue, 50);
+      setTimeout(processChunkQueue, 10);
     } catch (err: any) {
       clearTimeout(timeoutId);
-      console.error("[CLIENTE] Erro ao enviar chunk:", err);
+      console.error("[CLIENTE] Erro ao enviar chunk via POST:", err);
       
       errorCountRef.current++;
       isSendingChunkRef.current = false;
       
       if (errorCountRef.current >= 3) {
-        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Instabilidade na rede: Falha ao enviar bloco. Pulando bloco para evitar travamento (Fila: ${chunkQueueRef.current.length})...\n`]);
-        chunkQueueRef.current.shift(); // Remove the problematic chunk to avoid getting stuck
+        setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Falhas repetidas: pulando bloco gago (Fila: ${chunkQueueRef.current.length})...\n`]);
+        chunkQueueRef.current.shift(); // Remove the problematic chunk once it fails repeatedly
         errorCountRef.current = 0;
       }
       
-      // Retry or process the next chunk with a slight delay
-      setTimeout(processChunkQueue, 1500);
+      setTimeout(processChunkQueue, 1000);
     }
   };
 
   const [pipPosition, setPipPosition] = useState<'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'>('bottom-right');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const standaloneMicStreamRef = useRef<MediaStream | null>(null);
   const chunkQueueRef = useRef<ArrayBuffer[]>([]);
   const isSendingChunkRef = useRef(false);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
@@ -208,9 +230,9 @@ export default function App() {
     if (isLoggedIn) {
       fetchData();
       
-      // Initialize socket with standard settings for better compatibility
+      // Initialize socket with strictly WebSocket for optimal Cloud Run compatibility and low-latency transfer
       const socket = io(window.location.origin, {
-        transports: ['polling', 'websocket'], // Use polling first, then upgrade to websocket
+        transports: ['websocket'],
         reconnection: true,
         reconnectionAttempts: Infinity,
         reconnectionDelay: 1000,
@@ -365,7 +387,9 @@ export default function App() {
         worker = new Worker(workerUrl);
         
         worker.onmessage = () => {
-          if (active) draw();
+          if (active) {
+            requestAnimationFrame(draw);
+          }
         };
         worker.postMessage('start');
       } catch (err) {
@@ -563,6 +587,12 @@ export default function App() {
   const stopLocalSources = () => {
     screenStream?.getTracks().forEach(t => t.stop());
     cameraStream?.getTracks().forEach(t => t.stop());
+    if (standaloneMicStreamRef.current) {
+      try {
+        standaloneMicStreamRef.current.getTracks().forEach(t => t.stop());
+      } catch (e) {}
+      standaloneMicStreamRef.current = null;
+    }
     setScreenStream(null);
     setCameraStream(null);
   };
@@ -607,16 +637,34 @@ export default function App() {
     }
 
     // Small extra delay to ensure FFmpeg pipe is fully open
-    setTimeout(() => {
+    setTimeout(async () => {
       if (!canvasRef.current || !isLocalStreamingRef.current) {
         setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] ABORTADO no timeout (streaming parado).\n"]);
         return;
       }
       
-      setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Capturando stream do canvas...\n"]);
+      setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Capturando stream do canvas (25 FPS)...\n"]);
       const stream = canvasRef.current.captureStream(25);
-      // Add audio if available, otherwise create a silent track
-      const audioTrack = screenStream?.getAudioTracks()[0] || cameraStream?.getAudioTracks()[0];
+      
+      // Determine if visual/screen or camera already has a microphone/audio tract
+      let audioTrack = screenStream?.getAudioTracks()[0] || cameraStream?.getAudioTracks()[0];
+      
+      // Standalone Mic Fallback: If microphone is enabled but neither screen nor camera provided audio,
+      // request direct microphone stream so the broadcaster can always speak on YouTube!
+      if (!audioTrack && isMicEnabled) {
+        setFfmpegLogs(prev => [...prev.slice(-49), "[SISTEMA] Solicitando acesso ao microfone para a transmissão...\n"]);
+        try {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          standaloneMicStreamRef.current = micStream;
+          audioTrack = micStream.getAudioTracks()[0];
+          if (audioTrack) {
+            audioTrack.enabled = isMicEnabled;
+            setFfmpegLogs(prev => [...prev.slice(-49), "[CLIENTE] Áudio do microfone ativado com sucesso.\n"]);
+          }
+        } catch (e: any) {
+          setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] Falha ao recuperar microfone standalone: ${e.message}\n`]);
+        }
+      }
       
       if (audioTrack) {
         stream.addTrack(audioTrack);
@@ -673,15 +721,23 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(1500); // 1.5-second chunks for fast start, excellent stability and low connection overhead
+      recorder.start(1000); // 1.0-second chunks for fast start, supreme responsiveness and ultra-low lag
       mediaRecorderRef.current = recorder;
     }, 500);
   };
 
   const stopWebBroadcast = () => {
     if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
+      try {
+        mediaRecorderRef.current.stop();
+      } catch (e) {}
       mediaRecorderRef.current = null;
+    }
+    if (standaloneMicStreamRef.current) {
+      try {
+        standaloneMicStreamRef.current.getTracks().forEach(t => t.stop());
+      } catch (e) {}
+      standaloneMicStreamRef.current = null;
     }
     updateLocalStreaming(false);
     chunkQueueRef.current = [];
