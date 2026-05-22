@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat, RefreshCw, Mic, MicOff } from 'lucide-react';
+import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat, RefreshCw, Mic, MicOff, Trophy, Pause, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io } from 'socket.io-client';
 
@@ -217,6 +217,49 @@ export default function App() {
   };
 
   const [pipPosition, setPipPosition] = useState<'top-right' | 'top-left' | 'bottom-right' | 'bottom-left'>('bottom-right');
+
+  // Sports Overlay States
+  const [isScoreboardEnabled, setIsScoreboardEnabled] = useState(false);
+  const [teamAName, setTeamAName] = useState('TIME A');
+  const [teamBName, setTeamBName] = useState('TIME B');
+  const [scoreA, setScoreA] = useState(0);
+  const [scoreB, setScoreB] = useState(0);
+  
+  const [isTimerEnabled, setIsTimerEnabled] = useState(false);
+  const [timerSeconds, setTimerSeconds] = useState(0);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+
+  // Sync refs so compositor loop can read instantly without dependency cycle
+  const scoreboardEnabledRef = useRef(false);
+  const teamANameRef = useRef('TIME A');
+  const teamBNameRef = useRef('TIME B');
+  const scoreARef = useRef(0);
+  const scoreBRef = useRef(0);
+  const timerEnabledRef = useRef(false);
+  const timerSecondsRef = useRef(0);
+
+  useEffect(() => { scoreboardEnabledRef.current = isScoreboardEnabled; }, [isScoreboardEnabled]);
+  useEffect(() => { teamANameRef.current = teamAName; }, [teamAName]);
+  useEffect(() => { teamBNameRef.current = teamBName; }, [teamBName]);
+  useEffect(() => { scoreARef.current = scoreA; }, [scoreA]);
+  useEffect(() => { scoreBRef.current = scoreB; }, [scoreB]);
+  useEffect(() => { timerEnabledRef.current = isTimerEnabled; }, [isTimerEnabled]);
+  useEffect(() => { timerSecondsRef.current = timerSeconds; }, [timerSeconds]);
+
+  // Sports stopwatch timer tick
+  useEffect(() => {
+    let interval: any = null;
+    if (isTimerRunning) {
+      interval = setInterval(() => {
+        setTimerSeconds(prev => prev + 1);
+      }, 1000);
+    } else {
+      if (interval) clearInterval(interval);
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isTimerRunning]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const standaloneMicStreamRef = useRef<MediaStream | null>(null);
@@ -361,6 +404,132 @@ export default function App() {
           ctx.lineWidth = 2;
           ctx.strokeRect(x, y, pipWidth, pipHeight);
           ctx.drawImage(cameraVideoRef.current, x, y, pipWidth, pipHeight);
+        }
+
+        // Draw Sports Overlay (Placar e Cronômetro) on top-left corner
+        if (scoreboardEnabledRef.current || timerEnabledRef.current) {
+          const startX = 40;
+          const startY = 40;
+          
+          ctx.save();
+          ctx.textBaseline = 'middle';
+          
+          if (scoreboardEnabledRef.current) {
+            const nameA = (teamANameRef.current || "TIME A").toUpperCase();
+            const nameB = (teamBNameRef.current || "TIME B").toUpperCase();
+            const scA = String(scoreARef.current);
+            const scB = String(scoreBRef.current);
+            
+            const barHeight = 42;
+            const barWidth = 380;
+            const radius = 6;
+            
+            // Draw scoreboard background drop shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.beginPath();
+            ctx.roundRect(startX + 2, startY + 3, barWidth, barHeight, radius);
+            ctx.fill();
+            
+            // Main scoreboard background
+            ctx.fillStyle = 'rgba(15, 17, 23, 0.92)';
+            ctx.beginPath();
+            ctx.roundRect(startX, startY, barWidth, barHeight, radius);
+            ctx.fill();
+            
+            // Accent colored bar on the left side (Sports Neon yellow)
+            ctx.fillStyle = '#EAB308';
+            ctx.beginPath();
+            ctx.roundRect(startX, startY, 4, barHeight, [radius, 0, 0, radius]);
+            ctx.fill();
+            
+            // Team A Name
+            ctx.fillStyle = '#FFFFFF';
+            ctx.textAlign = 'right';
+            ctx.font = '700 15px "Inter", "Segoe UI", sans-serif';
+            ctx.fillText(nameA, startX + 120, startY + barHeight/2);
+            
+            // Score A Box
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+            ctx.beginPath();
+            ctx.roundRect(startX + 130, startY + 5, 36, barHeight - 10, 4);
+            ctx.fill();
+            // Score A text
+            ctx.fillStyle = '#FFFFFF';
+            ctx.textAlign = 'center';
+            ctx.font = '700 18px "JetBrains Mono", monospace';
+            ctx.fillText(scA, startX + 130 + 18, startY + barHeight/2);
+            
+            // Divider (vs)
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            ctx.fillRect(startX + 172, startY + 11, 2, barHeight - 22);
+            
+            // Score B Box
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.12)';
+            ctx.beginPath();
+            ctx.roundRect(startX + 180, startY + 5, 36, barHeight - 10, 4);
+            ctx.fill();
+            // Score B text
+            ctx.fillStyle = '#FFFFFF';
+            ctx.textAlign = 'center';
+            ctx.font = '700 18px "JetBrains Mono", monospace';
+            ctx.fillText(scB, startX + 180 + 18, startY + barHeight/2);
+            
+            // Team B Name
+            ctx.fillStyle = '#FFFFFF';
+            ctx.textAlign = 'left';
+            ctx.font = '700 15px "Inter", "Segoe UI", sans-serif';
+            ctx.fillText(nameB, startX + 226, startY + barHeight/2);
+            
+            // Attached Timer block on the right
+            if (timerEnabledRef.current) {
+              const minutes = Math.floor(timerSecondsRef.current / 60);
+              const seconds = timerSecondsRef.current % 60;
+              const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+              
+              const timerWidth = 90;
+              // Timer Background (Amber / Yellow)
+              ctx.fillStyle = '#EAB308';
+              ctx.beginPath();
+              // rounded only on right sides for attached effect
+              ctx.roundRect(startX + barWidth + 6, startY, timerWidth, barHeight, [0, radius, radius, 0]);
+              ctx.fill();
+              
+              // Timer text
+              ctx.fillStyle = '#000000';
+              ctx.textAlign = 'center';
+              ctx.font = '700 17px "JetBrains Mono", monospace';
+              ctx.fillText(timeStr, startX + barWidth + 6 + (timerWidth / 2), startY + barHeight/2);
+            }
+          } else if (timerEnabledRef.current) {
+            // Only Timer is enabled, draw independent elegant block
+            const minutes = Math.floor(timerSecondsRef.current / 60);
+            const seconds = timerSecondsRef.current % 60;
+            const timeStr = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+            
+            const barHeight = 42;
+            const barWidth = 100;
+            const radius = 6;
+            
+            // Background shadow
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.beginPath();
+            ctx.roundRect(startX + 1, startY + 3, barWidth, barHeight, radius);
+            ctx.fill();
+            
+            // Timer background (Amber / Yellow)
+            ctx.fillStyle = '#EAB308';
+            ctx.beginPath();
+            ctx.roundRect(startX, startY, barWidth, barHeight, radius);
+            ctx.fill();
+            
+            // Timer text
+            ctx.fillStyle = '#000000';
+            ctx.textAlign = 'center';
+            ctx.font = '700 18px "JetBrains Mono", monospace';
+            ctx.fillText(timeStr, startX + (barWidth / 2), startY + barHeight/2);
+          }
+          
+          ctx.restore();
         }
       };
 
@@ -1597,6 +1766,205 @@ export default function App() {
                       <p className="text-[10px] text-center text-white/20 uppercase tracking-widest">
                         A transmissão será enviada diretamente para o YouTube
                       </p>
+                    </div>
+                  </div>
+
+                  {/* Painel de Esportes / Placar e Cronômetro */}
+                  <div className="bg-[#151619] rounded-3xl border border-white/10 p-6">
+                    <div className="flex items-center gap-3 mb-6">
+                      <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500">
+                        <Trophy size={20} />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-white">Sobreposição de Esportes</h3>
+                        <p className="text-xs text-white/40">Placar e cronômetro ao vivo em tempo real</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      {/* Toggles Principais */}
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          onClick={() => setIsScoreboardEnabled(!isScoreboardEnabled)}
+                          className={`p-3 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1.5 ${isScoreboardEnabled ? 'bg-amber-500/10 border-amber-500 text-amber-500' : 'bg-black/20 border-white/5 text-white/40 hover:border-white/10'}`}
+                        >
+                          <span className="text-[10px] uppercase font-mono tracking-wider opacity-60">Modo Placar</span>
+                          <span className="text-xs uppercase font-bold">{isScoreboardEnabled ? 'Ativado' : 'Desativado'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => setIsTimerEnabled(!isTimerEnabled)}
+                          className={`p-3 rounded-xl border text-xs font-bold transition-all flex flex-col items-center gap-1.5 ${isTimerEnabled ? 'bg-amber-500/10 border-amber-500 text-amber-500' : 'bg-black/20 border-white/5 text-white/40 hover:border-white/10'}`}
+                        >
+                          <span className="text-[10px] uppercase font-mono tracking-wider opacity-60">Modo Cronômetro</span>
+                          <span className="text-xs uppercase font-bold">{isTimerEnabled ? 'Ativado' : 'Desativado'}</span>
+                        </button>
+                      </div>
+
+                      {/* Configuração de Times & Pontuação */}
+                      {isScoreboardEnabled && (
+                        <div className="space-y-4 pt-4 border-t border-white/5 animate-fade-in">
+                          <h4 className="text-xs font-mono uppercase tracking-wider text-white/40">Configurações do Placar</h4>
+                          
+                          <div className="grid grid-cols-2 gap-4">
+                            {/* TIME A */}
+                            <div className="bg-black/20 rounded-2xl p-3 border border-white/5 space-y-3">
+                              <div>
+                                <label className="block text-[10px] font-mono text-white/40 uppercase mb-1">Time A</label>
+                                <input
+                                  type="text"
+                                  value={teamAName}
+                                  onChange={(e) => setTeamAName(e.target.value)}
+                                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-bold"
+                                  placeholder="TIME A"
+                                />
+                              </div>
+                              
+                              <div className="flex items-center justify-between gap-1">
+                                <button
+                                  onClick={() => setScoreA(prev => Math.max(0, prev - 1))}
+                                  className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white flex items-center justify-center font-bold text-sm transition-all"
+                                >
+                                  -
+                                </button>
+                                <span className="font-mono text-xl font-extrabold text-white">{scoreA}</span>
+                                <button
+                                  onClick={() => setScoreA(prev => prev + 1)}
+                                  className="w-8 h-8 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold text-sm transition-all"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* TIME B */}
+                            <div className="bg-black/20 rounded-2xl p-3 border border-white/5 space-y-3">
+                              <div>
+                                <label className="block text-[10px] font-mono text-white/40 uppercase mb-1">Time B</label>
+                                <input
+                                  type="text"
+                                  value={teamBName}
+                                  onChange={(e) => setTeamBName(e.target.value)}
+                                  className="w-full bg-black/40 border border-white/10 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500 font-bold"
+                                  placeholder="TIME B"
+                                />
+                              </div>
+                              
+                              <div className="flex items-center justify-between gap-1">
+                                <button
+                                  onClick={() => setScoreB(prev => Math.max(0, prev - 1))}
+                                  className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white flex items-center justify-center font-bold text-sm transition-all"
+                                >
+                                  -
+                                </button>
+                                <span className="font-mono text-xl font-extrabold text-white">{scoreB}</span>
+                                <button
+                                  onClick={() => setScoreB(prev => prev + 1)}
+                                  className="w-8 h-8 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 flex items-center justify-center font-bold text-sm transition-all"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Controle do Cronômetro */}
+                      {isTimerEnabled && (
+                        <div className="space-y-4 pt-4 border-t border-white/5 animate-fade-in">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-xs font-mono uppercase tracking-wider text-white/40">Controle do Tempo</h4>
+                            <span className="font-mono text-base font-extrabold text-amber-500 bg-amber-500/10 px-2.5 py-0.5 rounded-lg">
+                              {String(Math.floor(timerSeconds / 60)).padStart(2, '0')}:{String(timerSeconds % 60).padStart(2, '0')}
+                            </span>
+                          </div>
+
+                          {/* Botões de Ação do Cronômetro */}
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => setIsTimerRunning(!isTimerRunning)}
+                              className={`flex-1 py-2 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${isTimerRunning ? 'bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20' : 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'}`}
+                            >
+                              {isTimerRunning ? <Pause size={14} /> : <Play size={14} />}
+                              {isTimerRunning ? 'Pausar' : 'Iniciar'}
+                            </button>
+
+                            <button
+                              onClick={() => {
+                                setIsTimerRunning(false);
+                                setTimerSeconds(0);
+                              }}
+                              className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-white/70 font-semibold text-xs transition-all flex items-center justify-center gap-1.5"
+                            >
+                              <RotateCcw size={14} />
+                              Zerar
+                            </button>
+                          </div>
+
+                          {/* Ajuste Rápido de Minutos */}
+                          <div className="grid grid-cols-3 gap-1.5 text-center font-bold">
+                            <button
+                              onClick={() => setTimerSeconds(prev => Math.max(0, prev - 60))}
+                              className="py-1.5 rounded-lg bg-black/40 hover:bg-black/60 border border-white/5 text-[10px] font-mono text-white/60 transition-all font-bold"
+                            >
+                              - 1 Min
+                            </button>
+                            <button
+                              onClick={() => setTimerSeconds(prev => prev + 60)}
+                              className="py-1.5 rounded-lg bg-[#EAB308]/10 hover:bg-[#EAB308]/20 border border-[#EAB308]/20 text-[10px] font-mono text-[#EAB308] transition-all font-bold"
+                            >
+                              + 1 Min
+                            </button>
+                            <button
+                              onClick={() => setTimerSeconds(prev => prev + 300)}
+                              className="py-1.5 rounded-lg bg-[#EAB308]/10 hover:bg-[#EAB308]/20 border border-[#EAB308]/20 text-[10px] font-mono text-[#EAB308] transition-all font-bold"
+                            >
+                              + 5 Min
+                            </button>
+                          </div>
+
+                          {/* Ajuste Manual Preciso */}
+                          <div className="bg-black/20 p-3 rounded-2xl border border-white/5 space-y-2">
+                            <span className="block text-[9px] font-mono uppercase tracking-wider text-white/40">Definir Tempo Manual</span>
+                            <div className="flex items-center gap-2">
+                              <div className="flex-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="99"
+                                  value={Math.floor(timerSeconds / 60)}
+                                  onChange={(e) => {
+                                    const m = parseInt(e.target.value) || 0;
+                                    const s = timerSeconds % 60;
+                                    setTimerSeconds(m * 60 + s);
+                                  }}
+                                  className="w-full text-center bg-black/40 border border-white/10 rounded-lg py-1 text-xs text-white focus:outline-none focus:border-amber-500 font-mono font-bold"
+                                  placeholder="Min"
+                                />
+                                <span className="block text-center text-[8px] text-white/30 uppercase font-mono mt-0.5">Minutos</span>
+                              </div>
+                              <span className="text-white/40 font-bold">:</span>
+                              <div className="flex-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="59"
+                                  value={timerSeconds % 60}
+                                  onChange={(e) => {
+                                    const m = Math.floor(timerSeconds / 60);
+                                    const s = parseInt(e.target.value) || 0;
+                                    setTimerSeconds(m * 60 + (s % 60));
+                                  }}
+                                  className="w-full text-center bg-black/40 border border-white/10 rounded-lg py-1 text-xs text-white focus:outline-none focus:border-amber-500 font-mono font-bold"
+                                  placeholder="Seg"
+                                />
+                                <span className="block text-center text-[8px] text-white/30 uppercase font-mono mt-0.5">Segundos</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
