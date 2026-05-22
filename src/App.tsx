@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat, RefreshCw } from 'lucide-react';
+import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat, RefreshCw, Mic, MicOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io } from 'socket.io-client';
 
@@ -108,6 +108,7 @@ export default function App() {
   // Local Transmission State
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [isMicEnabled, setIsMicEnabled] = useState(true);
   const [isLocalStreaming, setIsLocalStreaming] = useState(false);
   const isLocalStreamingRef = useRef(false);
   
@@ -121,12 +122,21 @@ export default function App() {
   const processChunkQueue = async () => {
     if (isSendingChunkRef.current || chunkQueueRef.current.length === 0 || !isLocalStreamingRef.current) return;
     
+    // Se a fila acumulou por instabilidade ou lentidão na rede, limpamos os blocos acumulados
+    // para recuperar a sincronia e manter a transmissão sempre em tempo real.
+    if (chunkQueueRef.current.length > 4) {
+      setFfmpegLogs(prev => [...prev.slice(-49), `[SISTEMA] Instabilidade de rede detectada (Fila: ${chunkQueueRef.current.length}). Descartando blocos antigos para recuperar tempo real...\n`]);
+      chunkQueueRef.current = chunkQueueRef.current.slice(-2);
+    }
+
+    if (chunkQueueRef.current.length === 0) return;
+
     isSendingChunkRef.current = true;
     const buffer = chunkQueueRef.current[0]; // Peek first chunk
 
     const token = localStorage.getItem('token');
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
 
     try {
       const res = await fetch('/api/stream/web-data', {
@@ -136,7 +146,8 @@ export default function App() {
           'Authorization': `Bearer ${token}`
         },
         body: buffer,
-        signal: controller.signal
+        signal: controller.signal,
+        keepalive: true // Reusa a conexão TCP persistente para diminuir o overhead de rede
       });
 
       clearTimeout(timeoutId);
@@ -277,6 +288,20 @@ export default function App() {
       cameraVideoRef.current.play().catch(e => console.error("Erro ao dar play no vídeo da câmera:", e));
     }
   }, [cameraStream]);
+
+  // Synchronize microphone mute/unmute state with stream tracks to support toggle during live streaming
+  useEffect(() => {
+    if (cameraStream) {
+      cameraStream.getAudioTracks().forEach(track => {
+        track.enabled = isMicEnabled;
+      });
+    }
+    if (screenStream) {
+      screenStream.getAudioTracks().forEach(track => {
+        track.enabled = isMicEnabled;
+      });
+    }
+  }, [isMicEnabled, cameraStream, screenStream]);
 
   // Compositor Loop
   useEffect(() => {
@@ -596,7 +621,7 @@ export default function App() {
         setFfmpegLogs(prev => [...prev.slice(-49), `[CLIENTE] ERRO NO MediaRecorder: ${e}\n`]);
       };
 
-      recorder.start(1000); // 1-second chunks for fast start and minimized latency
+      recorder.start(2500); // 2.5-second chunks for excellent stability and low connection overhead
       mediaRecorderRef.current = recorder;
     }, 500);
   };
@@ -1358,6 +1383,23 @@ export default function App() {
                           {pos.replace('-', ' ')}
                         </button>
                       ))}
+                    </div>
+
+                    {/* Controle de Áudio da Transmissão */}
+                    <div className="mt-6 pt-6 border-t border-white/5">
+                      <h4 className="text-xs font-mono uppercase tracking-wider text-white/40 mb-3">Controle de Áudio</h4>
+                      <button
+                        onClick={() => setIsMicEnabled(!isMicEnabled)}
+                        className={`w-full p-4 rounded-xl border transition-all flex items-center justify-between ${isMicEnabled ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-500'}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          {isMicEnabled ? <Mic size={18} /> : <MicOff size={18} />}
+                          <span className="text-xs font-bold uppercase tracking-wider">Áudio / Microfone</span>
+                        </div>
+                        <span className="text-[10px] uppercase font-mono bg-black/40 px-2.5 py-1 rounded-md tracking-wider">
+                          {isMicEnabled ? 'Ativado' : 'Mutado'}
+                        </span>
+                      </button>
                     </div>
 
                     <div className="mt-8 space-y-4">
