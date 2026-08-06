@@ -10,6 +10,28 @@ import bcrypt from "bcryptjs";
 import cors from "cors";
 import multer from "multer";
 import https from "https";
+import NodeMediaServer from "node-media-server";
+
+// Start RTMP server for receiving push cameras
+try {
+  const nms = new NodeMediaServer({
+    rtmp: {
+      port: 1935,
+      chunk_size: 60000,
+      gop_cache: true,
+      ping: 30,
+      ping_timeout: 60
+    },
+    http: {
+      port: 8000,
+      allow_origin: "*"
+    }
+  });
+  nms.run();
+  console.log("Servidor RTMP iniciado na porta 1935 para recepção de câmeras push");
+} catch (err) {
+  console.error("Aviso ao iniciar servidor RTMP:", err);
+}
 
 // Font downloader for sports scoreboard overlay in FFmpeg
 const fontPath = path.join(process.cwd(), "sportsfont.ttf");
@@ -82,6 +104,7 @@ const initDb = () => {
         current_source_id: null, 
         is_streaming: false, 
         youtube_key: "", 
+        system_domain: "centralitl.unityautomacoes.com.br",
         loop_video: false,
         scoreboard_enabled: false,
         timer_enabled: false,
@@ -96,10 +119,14 @@ const initDb = () => {
   }
   dbCache = JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
   
-  // Ensure default stream status fields exist for sports overlay
+  // Ensure default stream status fields exist for sports overlay and domain
   let updated = false;
   if (!dbCache.stream_status) {
     dbCache.stream_status = {};
+  }
+  if (!dbCache.stream_status.system_domain) {
+    dbCache.stream_status.system_domain = "centralitl.unityautomacoes.com.br";
+    updated = true;
   }
   if (dbCache.stream_status.scoreboard_enabled === undefined) {
     dbCache.stream_status.scoreboard_enabled = false;
@@ -401,20 +428,20 @@ async function startServer() {
         ...inputArgs,
         "-vf", vfFilters,
         "-c:v", "libx264",
-        "-preset", "ultrafast",
+        "-preset", "veryfast", // Veryfast preset for high picture clarity
         "-tune", "zerolatency",
-        "-profile:v", "baseline", // Baseline is lighter than high
-        "-level", "3.0",
+        "-profile:v", "high", // High profile for 1080p stream
+        "-level", "4.1",
         "-pix_fmt", "yuv420p",
         "-r", "30",
         "-g", "60",
         "-keyint_min", "60",
         "-sc_threshold", "0", 
-        "-b:v", "2500k",
-        "-maxrate", "2500k",
-        "-bufsize", "5000k",
+        "-b:v", "4500k", // High quality 4.5 Mbps bitrate
+        "-maxrate", "5000k",
+        "-bufsize", "10000k",
         "-c:a", "aac",
-        "-b:a", "128k",
+        "-b:a", "160k", // High quality 160k audio
         "-ar", "44100",
         ...mappingArgs,
         "-f", "flv",
@@ -772,6 +799,51 @@ async function startServer() {
     db.stream_status.youtube_key = req.body.key;
     saveDb(db);
     res.json({ success: true });
+  });
+
+  app.post("/api/status/domain", authenticate, (req, res) => {
+    const db = getDb();
+    db.stream_status.system_domain = req.body.domain || "centralitl.unityautomacoes.com.br";
+    saveDb(db);
+    io.emit("stream_status", db.stream_status);
+    res.json({ success: true, domain: db.stream_status.system_domain });
+  });
+
+  app.post("/api/cameras/test-rtmp", authenticate, (req, res) => {
+    const { stream_key } = req.body;
+    if (!stream_key) return res.status(400).json({ error: "Stream key é obrigatória" });
+    
+    const url = `rtmp://127.0.0.1:1935/live/${stream_key}`;
+    const ff = spawn("ffmpeg", ["-probesize", "32", "-analyzeduration", "0", "-i", url, "-frames:v", "1", "-f", "null", "-"]);
+    let done = false;
+    
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        ff.kill("SIGKILL");
+        res.json({ status: "waiting", message: "Nenhum fluxo RTMP detectado até o momento. Verifique se a câmera física está transmitindo para o IP/Domínio do servidor na porta 1935." });
+      }
+    }, 4000);
+
+    ff.on("close", (code) => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        if (code === 0) {
+          res.json({ status: "ok", message: "Sinal RTMP recebido com SUCESSO! A câmera está transmitindo corretamente." });
+        } else {
+          res.json({ status: "waiting", message: "Câmera ainda não conectada. Certifique-se de salvar a configuração na câmera física com a chave de fluxo correta." });
+        }
+      }
+    });
+
+    ff.on("error", () => {
+      if (!done) {
+        done = true;
+        clearTimeout(timer);
+        res.json({ status: "error", message: "Erro ao testar porta RTMP." });
+      }
+    });
   });
 
   app.post("/api/status/loop", authenticate, (req, res) => {

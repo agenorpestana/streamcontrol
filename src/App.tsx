@@ -23,6 +23,7 @@ interface StreamStatus {
   current_source_id: number | string | null;
   is_streaming: boolean;
   youtube_key: string;
+  system_domain?: string;
   loop_video: boolean;
   scoreboard_enabled?: boolean;
   timer_enabled?: boolean;
@@ -105,6 +106,12 @@ export default function App() {
   const [status, setStatus] = useState<StreamStatus | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'cameras' | 'videos' | 'settings'>('dashboard');
   const [newCam, setNewCam] = useState({ name: '', rtsp_url: '' });
+  const [camProtocol, setCamProtocol] = useState<'rtsp' | 'rtmp'>('rtsp');
+  const [rtmpStreamKey, setRtmpStreamKey] = useState(() => 'cam_' + Math.random().toString(36).substring(2, 8));
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [isTestingRtmp, setIsTestingRtmp] = useState(false);
+  const [rtmpTestResult, setRtmpTestResult] = useState<{ type: string; message: string } | null>(null);
+  const [systemDomainInput, setSystemDomainInput] = useState('');
   const [ytKey, setYtKey] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [ffmpegLogs, setFfmpegLogs] = useState<string[]>([]);
@@ -546,6 +553,9 @@ export default function App() {
         const s = await statusRes.json();
         setStatus(s);
         setYtKey(s.youtube_key);
+        if (s.system_domain) {
+          setSystemDomainInput(s.system_domain);
+        }
 
         // Map scoreboard/timer states from server
         if (s.scoreboard_enabled !== undefined) setIsScoreboardEnabled(s.scoreboard_enabled);
@@ -871,17 +881,84 @@ export default function App() {
     errorCountRef.current = 0;
   };
 
-  const addCamera = async () => {
+  const generateNewStreamKey = () => {
+    const key = 'cam_' + Math.random().toString(36).substring(2, 8);
+    setRtmpStreamKey(key);
+    setRtmpTestResult(null);
+  };
+
+  const copyToClipboard = (text: string, field: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  const testRtmpSignal = async () => {
+    setIsTestingRtmp(true);
+    setRtmpTestResult(null);
     const token = localStorage.getItem('token');
+    try {
+      const res = await fetch('/api/cameras/test-rtmp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ stream_key: rtmpStreamKey })
+      });
+      const data = await res.json();
+      setRtmpTestResult({ type: data.status, message: data.message });
+    } catch (err) {
+      setRtmpTestResult({ type: 'error', message: 'Erro ao se comunicar com o servidor para testar recepção RTMP.' });
+    } finally {
+      setIsTestingRtmp(false);
+    }
+  };
+
+  const saveSystemDomain = async () => {
+    const token = localStorage.getItem('token');
+    try {
+      const res = await fetch('/api/status/domain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ domain: systemDomainInput })
+      });
+      if (res.ok) {
+        alert('Domínio do sistema atualizado com sucesso!');
+        fetchData();
+      }
+    } catch (e) {
+      alert('Erro ao salvar domínio');
+    }
+  };
+
+  const addCamera = async () => {
+    if (!newCam.name.trim()) {
+      alert('Informe o nome identificador da câmera.');
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+    let url = newCam.rtsp_url;
+    
+    if (camProtocol === 'rtmp') {
+      const domain = status?.system_domain || systemDomainInput || window.location.hostname || "centralitl.unityautomacoes.com.br";
+      url = `rtmp://${domain}:1935/live/${rtmpStreamKey}`;
+    } else {
+      if (!url.trim()) {
+        alert('Informe a URL RTSP da câmera.');
+        return;
+      }
+    }
+
     await fetch('/api/cameras', {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}` 
       },
-      body: JSON.stringify(newCam)
+      body: JSON.stringify({ name: newCam.name, rtsp_url: url })
     });
+
     setNewCam({ name: '', rtsp_url: '' });
+    generateNewStreamKey();
     fetchData();
   };
 
@@ -1632,53 +1709,223 @@ export default function App() {
               className="max-w-4xl"
             >
               <div className="bg-[#151619] rounded-3xl border border-white/10 p-8 mb-8">
-                <h3 className="text-xl font-bold mb-6">Adicionar Nova Câmera (RTSP ou RTMP)</h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-                  <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Nome da Câmera</label>
-                    <input 
-                      type="text" 
-                      value={newCam.name}
-                      onChange={(e) => setNewCam({ ...newCam, name: e.target.value })}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
-                      placeholder="Entrada Principal"
-                    />
+                {/* Header with Title & Security Badge */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-400">
+                      <Camera size={22} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold">Adicionar Nova Câmera no Sistema ITL</h3>
+                      <p className="text-xs text-white/40 font-mono">Cadastre fluxos RTSP ou receba transmissões RTMP de câmeras físicas</p>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">URL RTSP ou RTMP</label>
+                  <span className="self-start sm:self-auto bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[11px] font-mono font-medium px-3 py-1.5 rounded-full flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                    Criptografia E2EE AES-256 Ativa
+                  </span>
+                </div>
+
+                {/* Camera Name Input */}
+                <div className="mb-6">
+                  <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-2">
+                    Nome Identificador da Câmera <span className="text-emerald-400">*</span>
+                  </label>
+                  <input 
+                    type="text" 
+                    value={newCam.name}
+                    onChange={(e) => setNewCam({ ...newCam, name: e.target.value })}
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white placeholder-white/20 focus:outline-none focus:border-emerald-500 transition-colors"
+                    placeholder="Ex: Runway VIPW Intelbras P9 ou Câmera Centro 01"
+                  />
+                </div>
+
+                {/* Protocol Selection */}
+                <div className="mb-6">
+                  <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-2">
+                    Protocolo de Entrada da Câmera:
+                  </label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setCamProtocol('rtsp')}
+                      className={`py-3.5 px-4 rounded-xl border font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                        camProtocol === 'rtsp'
+                          ? 'bg-black/60 border-emerald-500 text-emerald-400 shadow-lg shadow-emerald-500/10'
+                          : 'bg-black/30 border-white/10 text-white/40 hover:border-white/20'
+                      }`}
+                    >
+                      <span className="text-xs">((o))</span> RTSP (Ativo / Pull)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCamProtocol('rtmp')}
+                      className={`py-3.5 px-4 rounded-xl border font-bold text-sm transition-all flex items-center justify-center gap-2 ${
+                        camProtocol === 'rtmp'
+                          ? 'bg-emerald-950/40 border-emerald-500 text-emerald-400 shadow-lg shadow-emerald-500/10'
+                          : 'bg-black/30 border-white/10 text-white/40 hover:border-white/20'
+                      }`}
+                    >
+                      <span className="text-xs">((📡))</span> RTMP (Empurrado / Push)
+                    </button>
+                  </div>
+                </div>
+
+                {/* RTSP Specific Inputs */}
+                {camProtocol === 'rtsp' && (
+                  <div className="mb-6">
+                    <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-2">
+                      URL de Conexão RTSP <span className="text-emerald-400">*</span>
+                    </label>
                     <input 
                       type="text" 
                       value={newCam.rtsp_url}
                       onChange={(e) => setNewCam({ ...newCam, rtsp_url: e.target.value })}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
-                      placeholder="rtsp://... ou rtmp://..."
+                      className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white font-mono placeholder-white/20 focus:outline-none focus:border-emerald-500 transition-colors"
+                      placeholder="rtsp://admin:senha@192.168.1.100:554/cam/realmonitor?channel=1&subtype=0"
                     />
-                    <div className="mt-2 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 space-y-1">
-                      <p className="text-[10px] text-amber-200 leading-relaxed">
-                        <span className="font-bold">PROTOCOLOS SUPORTADOS:</span> Aceita URLs <span className="font-mono font-bold text-emerald-400">rtsp://</span> e <span className="font-mono font-bold text-amber-400">rtmp://</span>.
-                      </p>
-                      <p className="text-[10px] text-amber-200/80 leading-relaxed">
-                        Para câmeras na rede local, a URL deve possuir IP público ou redirecionamento de porta para o servidor da nuvem conseguir conectar.
+                    <div className="mt-2 bg-emerald-500/5 border border-emerald-500/10 rounded-lg p-3">
+                      <p className="text-[11px] text-emerald-300/80 leading-relaxed">
+                        <span className="font-bold text-emerald-400">MODO RTSP (PULL):</span> O servidor do sistema irá conectar ativamente no IP/Porta da câmera para puxar o sinal de vídeo.
                       </p>
                     </div>
                   </div>
-                </div>
+                )}
+
+                {/* RTMP Push Specific Inputs */}
+                {camProtocol === 'rtmp' && (
+                  <div className="space-y-6 mb-6">
+                    <div>
+                      <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-2">
+                        Chave de Segurança do Fluxo (Stream Key):
+                      </label>
+                      <div className="flex gap-3">
+                        <input 
+                          type="text" 
+                          value={rtmpStreamKey}
+                          onChange={(e) => setRtmpStreamKey(e.target.value)}
+                          className="flex-1 bg-black/50 border border-white/10 rounded-xl px-4 py-3 font-mono text-emerald-400 font-bold focus:outline-none focus:border-emerald-500 transition-colors"
+                          placeholder="cam_epao7f"
+                        />
+                        <button
+                          type="button"
+                          onClick={generateNewStreamKey}
+                          className="px-5 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center gap-2 text-white/80"
+                        >
+                          <RefreshCw size={14} /> Gerar
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* RTMP Parameters Container */}
+                    {(() => {
+                      const domain = status?.system_domain || systemDomainInput || window.location.hostname || "centralitl.unityautomacoes.com.br";
+                      const rtmpServerUrl = `rtmp://${domain}:1935/live`;
+                      const fullRtmpLink = `rtmp://${domain}:1935/live/${rtmpStreamKey}`;
+                      
+                      return (
+                        <div className="bg-black/40 border border-emerald-500/20 rounded-2xl p-6 space-y-4">
+                          <p className="text-xs font-medium text-white/80">
+                            Configure a transmissão em sua câmera física com os seguintes parâmetros:
+                          </p>
+
+                          {/* Servidor RTMP */}
+                          <div className="bg-black/60 border border-white/10 rounded-xl p-3 flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                              <span className="block text-[10px] font-mono text-white/40 uppercase font-bold">SERVIDOR RTMP:</span>
+                              <span className="font-mono text-xs text-white/90 truncate block select-all">
+                                {rtmpServerUrl}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(rtmpServerUrl, 'rtmp_server')}
+                              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-emerald-400 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-mono shrink-0"
+                            >
+                              {copiedField === 'rtmp_server' ? '✓ Copiado' : '📋 Copiar'}
+                            </button>
+                          </div>
+
+                          {/* Chave de Fluxo */}
+                          <div className="bg-black/60 border border-white/10 rounded-xl p-3 flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                              <span className="block text-[10px] font-mono text-white/40 uppercase font-bold">CHAVE DE FLUXO / STREAM KEY:</span>
+                              <span className="font-mono text-xs text-emerald-400 font-bold truncate block select-all">
+                                {rtmpStreamKey}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(rtmpStreamKey, 'stream_key')}
+                              className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-emerald-400 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-mono shrink-0"
+                            >
+                              {copiedField === 'stream_key' ? '✓ Copiado' : '📋 Copiar'}
+                            </button>
+                          </div>
+
+                          {/* Link Gerado para Câmera */}
+                          <div className="bg-black/60 border border-white/10 rounded-xl p-3 flex items-center justify-between gap-4">
+                            <div className="min-w-0">
+                              <span className="block text-[10px] font-mono text-white/40 uppercase font-bold">LINK GERADO PARA CÂMERA:</span>
+                              <span className="font-mono text-xs text-emerald-400 underline truncate block select-all">
+                                {fullRtmpLink}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard(fullRtmpLink, 'full_link')}
+                              className="px-3 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 rounded-lg transition-colors flex items-center gap-1.5 text-xs font-mono shrink-0 font-bold"
+                            >
+                              {copiedField === 'full_link' ? '✓ Copiado' : '📋 Copiar Link'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Diagnostic Test Button */}
+                    <div>
+                      <button
+                        type="button"
+                        onClick={testRtmpSignal}
+                        disabled={isTestingRtmp}
+                        className="w-full py-3.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 text-white/80"
+                      >
+                        <Activity size={16} className={isTestingRtmp ? "animate-spin text-emerald-400" : "text-emerald-400"} />
+                        {isTestingRtmp ? 'Diagnosticando Transmissão...' : '⚡ Diagnosticar / Testar Recepção RTMP'}
+                      </button>
+                      {rtmpTestResult && (
+                        <div className={`mt-3 p-4 rounded-xl border text-xs font-mono leading-relaxed ${
+                          rtmpTestResult.type === 'ok' 
+                            ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                            : 'bg-amber-500/10 border-amber-500/30 text-amber-200'
+                        }`}>
+                          {rtmpTestResult.message}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Save Camera Button */}
                 <button 
                   onClick={addCamera}
-                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-8 py-3 rounded-xl transition-all flex items-center gap-2"
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-8 py-3.5 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-emerald-500/20"
                 >
                   <Plus size={20} />
-                  Adicionar Câmera
+                  Salvar e Cadastrar Câmera
                 </button>
               </div>
 
+              {/* Cameras List */}
               <div className="space-y-4">
+                <h4 className="font-bold text-lg mb-2 text-white/80">Câmeras Cadastradas</h4>
                 {cameras.map(cam => {
                   const isRtmp = cam.rtsp_url && (cam.rtsp_url.startsWith('rtmp://') || cam.rtsp_url.startsWith('rtmps://'));
                   return (
                     <div key={cam.id} className="bg-[#151619] rounded-2xl border border-white/10 p-6 flex items-center justify-between group">
                       <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-black/40 rounded-xl flex items-center justify-center text-white/20">
+                        <div className="w-12 h-12 bg-black/40 rounded-xl flex items-center justify-center text-white/40">
                           <Camera size={24} />
                         </div>
                         <div>
@@ -1688,7 +1935,7 @@ export default function App() {
                               {isRtmp ? 'RTMP' : 'RTSP'}
                             </span>
                           </div>
-                          <p className="text-sm text-white/40 font-mono">{cam.rtsp_url}</p>
+                          <p className="text-sm text-white/40 font-mono mt-0.5">{cam.rtsp_url}</p>
                         </div>
                       </div>
                       <button 
@@ -1996,41 +2243,65 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               className="max-w-2xl"
             >
-              <div className="bg-[#151619] rounded-3xl border border-white/10 p-8">
-                <h3 className="text-xl font-bold mb-6">Configurações de Transmissão</h3>
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Chave de Transmissão do YouTube</label>
-                    <div className="flex gap-4">
-                      <input 
-                        type="password" 
-                        value={ytKey}
-                        onChange={(e) => setYtKey(e.target.value)}
-                        className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
-                        placeholder="xxxx-xxxx-xxxx-xxxx"
-                      />
-                      <button 
-                        onClick={saveYtKey}
-                        className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-6 py-3 rounded-xl transition-all"
-                      >
-                        Salvar
-                      </button>
+              <div className="bg-[#151619] rounded-3xl border border-white/10 p-8 space-y-8">
+                <div>
+                  <h3 className="text-xl font-bold mb-6">Configurações de Transmissão YouTube</h3>
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Chave de Transmissão do YouTube</label>
+                      <div className="flex gap-4">
+                        <input 
+                          type="password" 
+                          value={ytKey}
+                          onChange={(e) => setYtKey(e.target.value)}
+                          className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
+                          placeholder="xxxx-xxxx-xxxx-xxxx"
+                        />
+                        <button 
+                          onClick={saveYtKey}
+                          className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-6 py-3 rounded-xl transition-all"
+                        >
+                          Salvar
+                        </button>
+                      </div>
+                      <p className="text-[10px] text-white/20 mt-2 font-mono">Encontrada no painel do YouTube Studio</p>
                     </div>
-                    <p className="text-[10px] text-white/20 mt-2 font-mono">Encontrada no painel do YouTube Studio</p>
-                  </div>
 
-                  <div className="pt-6 border-t border-white/10">
-                    <h4 className="font-bold mb-4">Configuração de Saída</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="p-4 bg-black/20 rounded-xl border border-white/5">
-                        <span className="block text-[10px] font-mono text-white/40 uppercase mb-1">Resolução</span>
-                        <span className="font-bold">1080p (1920x1080)</span>
-                      </div>
-                      <div className="p-4 bg-black/20 rounded-xl border border-white/5">
-                        <span className="block text-[10px] font-mono text-white/40 uppercase mb-1">Bitrate</span>
-                        <span className="font-bold">3000 kbps</span>
+                    <div className="pt-6 border-t border-white/10">
+                      <h4 className="font-bold mb-4">Parâmetros de Qualidade de Saída (Alta Definição)</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-4 bg-black/20 rounded-xl border border-white/5">
+                          <span className="block text-[10px] font-mono text-white/40 uppercase mb-1">Resolução</span>
+                          <span className="font-bold text-emerald-400">1080p Full HD</span>
+                        </div>
+                        <div className="p-4 bg-black/20 rounded-xl border border-white/5">
+                          <span className="block text-[10px] font-mono text-white/40 uppercase mb-1">Bitrate de Vídeo</span>
+                          <span className="font-bold text-emerald-400">4500 kbps (High Quality)</span>
+                        </div>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-white/10">
+                  <h3 className="text-xl font-bold mb-4">Domínio do Sistema ITL (Servidor RTMP)</h3>
+                  <p className="text-xs text-white/40 mb-4 leading-relaxed">
+                    Este domínio é utilizado na geração automática do endereço RTMP que deve ser inserido nas configurações da câmera física.
+                  </p>
+                  <div className="flex gap-4">
+                    <input 
+                      type="text" 
+                      value={systemDomainInput}
+                      onChange={(e) => setSystemDomainInput(e.target.value)}
+                      className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors font-mono text-sm"
+                      placeholder="centralitl.unityautomacoes.com.br"
+                    />
+                    <button 
+                      onClick={saveSystemDomain}
+                      className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold px-6 py-3 rounded-xl transition-all"
+                    >
+                      Salvar Domínio
+                    </button>
                   </div>
                 </div>
               </div>
