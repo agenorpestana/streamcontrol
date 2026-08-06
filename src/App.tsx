@@ -939,7 +939,8 @@ export default function App() {
     let url = newCam.rtsp_url;
     
     if (camProtocol === 'rtmp') {
-      const domain = status?.system_domain || systemDomainInput || window.location.hostname || "centralitl.unityautomacoes.com.br";
+      const currentHost = window.location.hostname;
+      const domain = (status?.system_domain && status.system_domain.trim() !== '' && status.system_domain !== 'centralitl.unityautomacoes.com.br') ? status.system_domain : (currentHost || 'localhost');
       url = `rtmp://${domain}:1935/live/${rtmpStreamKey}`;
     } else {
       if (!url.trim()) {
@@ -1819,7 +1820,8 @@ export default function App() {
 
                     {/* RTMP Parameters Container */}
                     {(() => {
-                      const domain = status?.system_domain || systemDomainInput || window.location.hostname || "centralitl.unityautomacoes.com.br";
+                      const currentHost = window.location.hostname;
+                      const domain = (status?.system_domain && status.system_domain.trim() !== '' && status.system_domain !== 'centralitl.unityautomacoes.com.br') ? status.system_domain : (currentHost || 'localhost');
                       const rtmpServerUrl = `rtmp://${domain}:1935/live`;
                       const fullRtmpLink = `rtmp://${domain}:1935/live/${rtmpStreamKey}`;
                       
@@ -2293,8 +2295,8 @@ export default function App() {
                       type="text" 
                       value={systemDomainInput}
                       onChange={(e) => setSystemDomainInput(e.target.value)}
-                      className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors font-mono text-sm"
-                      placeholder="centralitl.unityautomacoes.com.br"
+                      className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors font-mono text-sm text-white placeholder-white/20"
+                      placeholder={window.location.hostname || "seu-dominio-ou-ip.com"}
                     />
                     <button 
                       onClick={saveSystemDomain}

@@ -104,7 +104,7 @@ const initDb = () => {
         current_source_id: null, 
         is_streaming: false, 
         youtube_key: "", 
-        system_domain: "centralitl.unityautomacoes.com.br",
+        system_domain: "",
         loop_video: false,
         scoreboard_enabled: false,
         timer_enabled: false,
@@ -124,8 +124,8 @@ const initDb = () => {
   if (!dbCache.stream_status) {
     dbCache.stream_status = {};
   }
-  if (!dbCache.stream_status.system_domain) {
-    dbCache.stream_status.system_domain = "centralitl.unityautomacoes.com.br";
+  if (dbCache.stream_status.system_domain === undefined || dbCache.stream_status.system_domain === "centralitl.unityautomacoes.com.br") {
+    dbCache.stream_status.system_domain = "";
     updated = true;
   }
   if (dbCache.stream_status.scoreboard_enabled === undefined) {
@@ -787,7 +787,12 @@ async function startServer() {
   });
 
   app.get("/api/status", authenticate, (req, res) => {
-    res.json(getDb().stream_status);
+    const status = { ...getDb().stream_status };
+    const currentHost = req.get("host")?.split(":")[0] || req.hostname;
+    if (!status.system_domain || status.system_domain === "centralitl.unityautomacoes.com.br") {
+      status.system_domain = currentHost;
+    }
+    res.json(status);
   });
 
   app.get("/api/status/logs", authenticate, (req, res) => {
@@ -803,9 +808,10 @@ async function startServer() {
 
   app.post("/api/status/domain", authenticate, (req, res) => {
     const db = getDb();
-    db.stream_status.system_domain = req.body.domain || "centralitl.unityautomacoes.com.br";
+    const currentHost = req.get("host")?.split(":")[0] || req.hostname;
+    db.stream_status.system_domain = req.body.domain ? req.body.domain.trim() : currentHost;
     saveDb(db);
-    io.emit("stream_status", db.stream_status);
+    io.emit("stream_status", { ...db.stream_status, system_domain: db.stream_status.system_domain || currentHost });
     res.json({ success: true, domain: db.stream_status.system_domain });
   });
 
