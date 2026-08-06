@@ -337,23 +337,53 @@ async function startServer() {
         saveDb(db);
 
         const isRtmp = cam.rtsp_url && (cam.rtsp_url.startsWith("rtmp://") || cam.rtsp_url.startsWith("rtmps://"));
+
+        // Probe if camera stream has native audio track
+        const hasAudio = await new Promise<boolean>((resolve) => {
+          const probeArgs = isRtmp 
+            ? ["-v", "quiet", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", cam.rtsp_url]
+            : ["-rtsp_transport", "tcp", "-v", "quiet", "-select_streams", "a", "-show_entries", "stream=codec_type", "-of", "csv=p=0", cam.rtsp_url];
+          
+          const proc = spawn("ffprobe", probeArgs);
+          let out = "";
+          proc.stdout.on("data", (d) => { out += d.toString(); });
+          const timer = setTimeout(() => {
+            proc.kill("SIGKILL");
+            resolve(false);
+          }, 1500);
+          proc.on("close", () => {
+            clearTimeout(timer);
+            resolve(out.trim().includes("audio"));
+          });
+        });
+
         if (isRtmp) {
           inputArgs = [
-            "-analyzeduration", "5M", 
-            "-probesize", "5M", 
-            "-i", cam.rtsp_url,
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+            "-use_wallclock_as_timestamps", "1",
+            "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
+            "-analyzeduration", "500000", 
+            "-probesize", "500000", 
+            "-i", cam.rtsp_url
           ];
         } else {
           inputArgs = [
             "-rtsp_transport", "tcp", 
-            "-analyzeduration", "10M", 
-            "-probesize", "10M", 
-            "-i", cam.rtsp_url,
-            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+            "-use_wallclock_as_timestamps", "1",
+            "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
+            "-analyzeduration", "1000000", 
+            "-probesize", "1000000", 
+            "-i", cam.rtsp_url
           ];
         }
-        mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
+
+        if (hasAudio) {
+          addLog("Áudio detectado na câmera! Transmitindo áudio nativo da câmera.\n");
+          mappingArgs = ["-map", "0:v:0", "-map", "0:a:0"];
+        } else {
+          addLog("Nenhum canal de áudio na câmera. Utilizando faixa de áudio nulo para o YouTube.\n");
+          inputArgs.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100");
+          mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
+        }
       } else if (type === "video") {
         const vid = db.videos.find((v: any) => v.id === id);
         if (!vid) return;
@@ -428,12 +458,13 @@ async function startServer() {
         ...inputArgs,
         "-vf", vfFilters,
         "-c:v", "libx264",
-        "-preset", "veryfast", // Veryfast preset for high picture clarity
+        "-preset", "superfast", // Superfast preset for fast encoding and low latency
         "-tune", "zerolatency",
         "-profile:v", "high", // High profile for 1080p stream
         "-level", "4.1",
         "-pix_fmt", "yuv420p",
         "-r", "30",
+        "-vsync", "1", // Force constant 30fps stream output
         "-g", "60",
         "-keyint_min", "60",
         "-sc_threshold", "0", 
@@ -443,12 +474,13 @@ async function startServer() {
         "-c:a", "aac",
         "-b:a", "160k", // High quality 160k audio
         "-ar", "44100",
+        "-async", "1", // Sync audio with video frame generation
         ...mappingArgs,
         "-f", "flv",
         "-flvflags", "no_duration_filesize",
         "-rtmp_buffer", "1000",
         "-rtmp_live", "live",
-        "-max_muxing_queue_size", "1024",
+        "-max_muxing_queue_size", "2048",
         "-threads", "0",
         rtmpUrl
       ];
@@ -633,7 +665,7 @@ async function startServer() {
 
     const cache = snapshotCaches[camId];
     const now = Date.now();
-    const CACHE_TTL = 1500; // 1.5 seconds cache TTL
+    const CACHE_TTL = 200; // 0.2s cache TTL for ultra fast snapshot refresh
 
     const deliverBuffer = (buf: Buffer | null) => {
       if (res.headersSent) return;
@@ -734,12 +766,66 @@ async function startServer() {
     });
   });
 
+  app.get("/api/cameras/:id/mjpeg", authenticate, (req, res) => {
+    const db = getDb();
+    const camId = parseInt(req.params.id);
+    const cam = db.cameras.find((c: any) => c.id === camId);
+    if (!cam) return res.status(404).json({ error: "Câmera não encontrada" });
+
+    res.writeHead(200, {
+      "Content-Type": "multipart/x-mixed-replace; boundary=ffmpeg",
+      "Cache-Control": "no-cache, no-store, must-revalidate",
+      "Connection": "keep-alive",
+      "Pragma": "no-cache"
+    });
+
+    const isRtmp = cam.rtsp_url && (cam.rtsp_url.startsWith("rtmp://") || cam.rtsp_url.startsWith("rtmps://"));
+    const transportOpts = isRtmp ? [] : ["-rtsp_transport", "tcp"];
+
+    const args = [
+      ...transportOpts,
+      "-use_wallclock_as_timestamps", "1",
+      "-probesize", "100000",
+      "-analyzeduration", "100000",
+      "-i", cam.rtsp_url,
+      "-r", "20",
+      "-vf", "scale=1280:-1",
+      "-an",
+      "-c:v", "mjpeg",
+      "-q:v", "4",
+      "-f", "mpjpeg",
+      "-boundary_tag", "ffmpeg",
+      "-"
+    ];
+
+    const ff = spawn("ffmpeg", args);
+    ff.stdout.pipe(res);
+
+    req.on("close", () => {
+      ff.kill("SIGKILL");
+    });
+  });
+
   app.post("/api/cameras", authenticate, (req, res) => {
     const db = getDb();
     const newCam = { id: Date.now(), ...req.body };
     db.cameras.push(newCam);
     saveDb(db);
     res.json(newCam);
+  });
+
+  app.put("/api/cameras/:id", authenticate, (req, res) => {
+    const db = getDb();
+    const camId = parseInt(req.params.id);
+    const index = db.cameras.findIndex((c: any) => c.id === camId);
+    if (index === -1) return res.status(404).json({ error: "Câmera não encontrada" });
+
+    const { name, rtsp_url } = req.body;
+    if (name) db.cameras[index].name = name;
+    if (rtsp_url) db.cameras[index].rtsp_url = rtsp_url;
+
+    saveDb(db);
+    res.json(db.cameras[index]);
   });
 
   app.delete("/api/cameras/:id", authenticate, (req, res) => {

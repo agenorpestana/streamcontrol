@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat, RefreshCw, Mic, MicOff, Trophy, Pause, RotateCcw } from 'lucide-react';
+import { Camera, Video, Play, Square, Settings, Plus, Trash2, LogOut, Activity, Monitor, Upload, Repeat, RefreshCw, Mic, MicOff, Trophy, Pause, RotateCcw, Edit } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io } from 'socket.io-client';
 
@@ -35,33 +35,67 @@ interface StreamStatus {
   timer_running?: boolean;
 }
 
-const CameraPreview = ({ camId, className, isLive = false }: { camId: number, className?: string, isLive?: boolean }) => {
+const CameraPreview = ({ camId, className = '', isLive = false }: { camId: number, className?: string, isLive?: boolean }) => {
   const token = localStorage.getItem('token');
-  const getSnapshotUrl = () => `/api/cameras/${camId}/snapshot?token=${token}&t=${Date.now()}`;
-  const [src, setSrc] = useState(getSnapshotUrl());
+  const [displayedSrc, setDisplayedSrc] = useState<string>(`/api/cameras/${camId}/snapshot?token=${token}&t=${Date.now()}`);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [useMjpeg, setUseMjpeg] = useState(isLive);
 
   useEffect(() => {
-    // Update src immediately when camId changes
-    setSrc(getSnapshotUrl());
-    setLoading(true);
-    setError(false);
+    if (useMjpeg) {
+      setDisplayedSrc(`/api/cameras/${camId}/mjpeg?token=${token}&t=${Date.now()}`);
+      setLoading(false);
+      setError(false);
+      return;
+    }
 
-    // Active/Live preview gets a 2s interval, grid cards get a 5s interval to protect CPU/connections
-    const pollInterval = isLive ? 2000 : 5000;
+    let active = true;
+    const fetchNextFrame = () => {
+      if (!active) return;
+      const url = `/api/cameras/${camId}/snapshot?token=${token}&t=${Date.now()}`;
+      const img = new Image();
+      img.onload = () => {
+        if (active) {
+          setDisplayedSrc(url);
+          setLoading(false);
+          setError(false);
+        }
+      };
+      img.onerror = () => {
+        if (active) {
+          setError(true);
+          setLoading(false);
+        }
+      };
+      img.src = url;
+    };
 
-    const interval = setInterval(() => {
-      setSrc(getSnapshotUrl());
-    }, pollInterval); 
-    return () => clearInterval(interval);
-  }, [camId, token, isLive]);
+    fetchNextFrame();
+    const intervalTime = isLive ? 250 : 1000;
+    const interval = setInterval(fetchNextFrame, intervalTime);
 
-  const refresh = () => {
-    setLoading(true);
-    setError(false);
-    setSrc(getSnapshotUrl());
-  };
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [camId, token, isLive, useMjpeg]);
+
+  if (useMjpeg) {
+    return (
+      <div className={`relative bg-black/40 overflow-hidden ${className}`}>
+        <img 
+          src={displayedSrc} 
+          alt="Live Camera Stream"
+          className="w-full h-full object-contain"
+          onError={() => {
+            // Fallback to snapshot preloader if MJPEG stream drops
+            setUseMjpeg(false);
+          }}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className={`relative bg-black/40 overflow-hidden ${className}`}>
@@ -75,7 +109,11 @@ const CameraPreview = ({ camId, className, isLive = false }: { camId: number, cl
         <div className="absolute inset-0 flex flex-col items-center justify-center p-4 text-center">
           <p className="text-red-400 text-[10px] font-bold uppercase mb-2">Erro de Conexão</p>
           <button 
-            onClick={refresh}
+            onClick={() => {
+              setError(false);
+              setLoading(true);
+              setUseMjpeg(isLive);
+            }}
             className="p-2 bg-white/5 hover:bg-white/10 rounded-full transition-colors"
           >
             <RefreshCw className="w-4 h-4 text-white" />
@@ -83,14 +121,9 @@ const CameraPreview = ({ camId, className, isLive = false }: { camId: number, cl
         </div>
       ) : (
         <img 
-          src={src} 
+          src={displayedSrc} 
           alt="Preview"
-          className="w-full h-full object-cover"
-          onLoad={() => setLoading(false)}
-          onError={() => {
-            setError(true);
-            setLoading(false);
-          }}
+          className="w-full h-full object-contain"
         />
       )}
     </div>
@@ -108,6 +141,13 @@ export default function App() {
   const [newCam, setNewCam] = useState({ name: '', rtsp_url: '' });
   const [camProtocol, setCamProtocol] = useState<'rtsp' | 'rtmp'>('rtsp');
   const [rtmpStreamKey, setRtmpStreamKey] = useState(() => 'cam_' + Math.random().toString(36).substring(2, 8));
+
+  // Edit Camera Modal State
+  const [editingCam, setEditingCam] = useState<CameraData | null>(null);
+  const [editCamName, setEditCamName] = useState('');
+  const [editCamProtocol, setEditCamProtocol] = useState<'rtsp' | 'rtmp'>('rtsp');
+  const [editCamRtspUrl, setEditCamRtspUrl] = useState('');
+  const [editCamRtmpKey, setEditCamRtmpKey] = useState('');
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [isTestingRtmp, setIsTestingRtmp] = useState(false);
   const [rtmpTestResult, setRtmpTestResult] = useState<{ type: string; message: string } | null>(null);
@@ -970,6 +1010,63 @@ export default function App() {
       headers: { Authorization: `Bearer ${token}` }
     });
     fetchData();
+  };
+
+  const openEditCamModal = (cam: CameraData) => {
+    setEditingCam(cam);
+    setEditCamName(cam.name);
+    const isRtmp = cam.rtsp_url && (cam.rtsp_url.startsWith('rtmp://') || cam.rtsp_url.startsWith('rtmps://'));
+    if (isRtmp) {
+      setEditCamProtocol('rtmp');
+      const parts = cam.rtsp_url.split('/');
+      const key = parts[parts.length - 1] || '';
+      setEditCamRtmpKey(key);
+      setEditCamRtspUrl('');
+    } else {
+      setEditCamProtocol('rtsp');
+      setEditCamRtspUrl(cam.rtsp_url);
+      setEditCamRtmpKey('');
+    }
+  };
+
+  const saveEditedCamera = async () => {
+    if (!editingCam) return;
+    if (!editCamName.trim()) {
+      alert('Informe o nome da câmera.');
+      return;
+    }
+
+    let finalUrl = editCamRtspUrl;
+    if (editCamProtocol === 'rtmp') {
+      const currentHost = window.location.hostname;
+      const domain = (status?.system_domain && status.system_domain.trim() !== '' && status.system_domain !== 'centralitl.unityautomacoes.com.br') ? status.system_domain : (currentHost || 'localhost');
+      finalUrl = `rtmp://${domain}:1935/live/${editCamRtmpKey}`;
+    } else {
+      if (!finalUrl.trim()) {
+        alert('Informe a URL RTSP da câmera.');
+        return;
+      }
+    }
+
+    const token = localStorage.getItem('token');
+    try {
+      const res = await fetch(`/api/cameras/${editingCam.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ name: editCamName, rtsp_url: finalUrl })
+      });
+      if (res.ok) {
+        setEditingCam(null);
+        fetchData();
+      } else {
+        alert('Erro ao atualizar câmera.');
+      }
+    } catch (err) {
+      alert('Erro de conexão ao atualizar câmera.');
+    }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1940,16 +2037,137 @@ export default function App() {
                           <p className="text-sm text-white/40 font-mono mt-0.5">{cam.rtsp_url}</p>
                         </div>
                       </div>
-                      <button 
-                        onClick={() => deleteCamera(cam.id)}
-                        className="p-3 text-white/20 hover:text-red-400 hover:bg-red-400/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                      >
-                        <Trash2 size={20} />
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button 
+                          onClick={() => openEditCamModal(cam)}
+                          title="Editar Câmera"
+                          className="px-3 py-2 bg-white/5 hover:bg-emerald-500/20 text-white/60 hover:text-emerald-400 rounded-xl transition-all flex items-center gap-1.5 text-xs font-bold border border-white/5"
+                        >
+                          <Edit size={16} />
+                          <span>Editar</span>
+                        </button>
+                        <button 
+                          onClick={() => deleteCamera(cam.id)}
+                          title="Excluir Câmera"
+                          className="p-2.5 text-white/40 hover:text-red-400 hover:bg-red-400/10 rounded-xl transition-all border border-white/5"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
               </div>
+
+              {/* Edit Camera Modal */}
+              {editingCam && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
+                  <div className="bg-[#151619] border border-white/10 rounded-3xl p-8 max-w-xl w-full space-y-6 shadow-2xl">
+                    <div className="flex items-center justify-between border-b border-white/10 pb-4">
+                      <h3 className="text-xl font-bold flex items-center gap-2">
+                        <Edit size={22} className="text-emerald-400" />
+                        Editar Câmera: {editingCam.name}
+                      </h3>
+                      <button 
+                        onClick={() => setEditingCam(null)}
+                        className="text-white/40 hover:text-white font-mono text-xs px-3 py-1 rounded bg-white/5"
+                      >
+                        ✕ Fechar
+                      </button>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-2">
+                          Nome da Câmera
+                        </label>
+                        <input 
+                          type="text" 
+                          value={editCamName}
+                          onChange={(e) => setEditCamName(e.target.value)}
+                          className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors text-white font-medium"
+                          placeholder="Ex: Câmera do Pátio"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-2">
+                          Tipo de Conexão / Protocolo
+                        </label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setEditCamProtocol('rtsp')}
+                            className={`py-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                              editCamProtocol === 'rtsp'
+                                ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                                : 'bg-black/40 border-white/10 text-white/60 hover:border-white/20'
+                            }`}
+                          >
+                            Câmera IP (RTSP)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditCamProtocol('rtmp')}
+                            className={`py-3 rounded-xl border text-xs font-bold transition-all flex items-center justify-center gap-2 ${
+                              editCamProtocol === 'rtmp'
+                                ? 'bg-amber-500/20 border-amber-500 text-amber-400'
+                                : 'bg-black/40 border-white/10 text-white/60 hover:border-white/20'
+                            }`}
+                          >
+                            Câmera Push (RTMP)
+                          </button>
+                        </div>
+                      </div>
+
+                      {editCamProtocol === 'rtsp' ? (
+                        <div>
+                          <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-2">
+                            URL RTSP da Câmera IP
+                          </label>
+                          <input 
+                            type="text" 
+                            value={editCamRtspUrl}
+                            onChange={(e) => setEditCamRtspUrl(e.target.value)}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 font-mono text-sm text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                            placeholder="rtsp://admin:123456@192.168.1.100:554/cam/realmonitor"
+                          />
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-xs font-mono uppercase tracking-wider text-white/60 mb-2">
+                            Chave do Fluxo RTMP (Stream Key)
+                          </label>
+                          <input 
+                            type="text" 
+                            value={editCamRtmpKey}
+                            onChange={(e) => setEditCamRtmpKey(e.target.value)}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 font-mono text-amber-400 font-bold focus:outline-none focus:border-amber-500 transition-colors"
+                            placeholder="cam_epao7f"
+                          />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex justify-end gap-3 pt-4 border-t border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => setEditingCam(null)}
+                        className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white/70 rounded-xl text-xs font-bold transition-all"
+                      >
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveEditedCamera}
+                        className="px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-500/20"
+                      >
+                        Salvar Alterações
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
 
