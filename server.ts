@@ -359,6 +359,7 @@ async function startServer() {
 
         if (isRtmp) {
           inputArgs = [
+            "-thread_queue_size", "1024",
             "-use_wallclock_as_timestamps", "1",
             "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
             "-analyzeduration", "500000", 
@@ -367,6 +368,7 @@ async function startServer() {
           ];
         } else {
           inputArgs = [
+            "-thread_queue_size", "1024",
             "-rtsp_transport", "tcp", 
             "-use_wallclock_as_timestamps", "1",
             "-fflags", "+nobuffer+genpts+igndts+discardcorrupt",
@@ -377,8 +379,8 @@ async function startServer() {
         }
 
         if (hasAudio) {
-          addLog("Áudio detectado na câmera! Transmitindo áudio nativo da câmera.\n");
-          mappingArgs = ["-map", "0:v:0", "-map", "0:a:0"];
+          addLog("Áudio detectado na câmera! Transmitindo e resincronizando áudio nativo para o YouTube.\n");
+          mappingArgs = ["-map", "0:v:0", "-map", "0:a:0", "-af", "aresample=async=1000:min_hard_comp=0.100000:first_pts=0"];
         } else {
           addLog("Nenhum canal de áudio na câmera. Utilizando faixa de áudio nulo para o YouTube.\n");
           inputArgs.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100");

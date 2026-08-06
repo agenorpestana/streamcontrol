@@ -35,18 +35,19 @@ interface StreamStatus {
   timer_running?: boolean;
 }
 
-const CameraPreview = ({ camId, className = '', isLive = false }: { camId: number, className?: string, isLive?: boolean }) => {
+const CameraPreview = ({ camId, className = '', isLive = false }: { camId: number; className?: string; isLive?: boolean; key?: React.Key }) => {
   const token = localStorage.getItem('token');
-  const [displayedSrc, setDisplayedSrc] = useState<string>(`/api/cameras/${camId}/snapshot?token=${token}&t=${Date.now()}`);
+  const [displayedSrc, setDisplayedSrc] = useState<string>(`/api/cameras/${camId}/mjpeg?token=${token}&t=${Date.now()}`);
   const [error, setError] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [useMjpeg, setUseMjpeg] = useState(isLive);
+  const [useMjpeg, setUseMjpeg] = useState(true);
 
   useEffect(() => {
+    setError(false);
+    setLoading(true);
     if (useMjpeg) {
       setDisplayedSrc(`/api/cameras/${camId}/mjpeg?token=${token}&t=${Date.now()}`);
       setLoading(false);
-      setError(false);
       return;
     }
 
@@ -72,7 +73,7 @@ const CameraPreview = ({ camId, className = '', isLive = false }: { camId: numbe
     };
 
     fetchNextFrame();
-    const intervalTime = isLive ? 250 : 1000;
+    const intervalTime = isLive ? 200 : 800;
     const interval = setInterval(fetchNextFrame, intervalTime);
 
     return () => {
@@ -85,9 +86,11 @@ const CameraPreview = ({ camId, className = '', isLive = false }: { camId: numbe
     return (
       <div className={`relative bg-black/40 overflow-hidden ${className}`}>
         <img 
+          key={`${camId}-${displayedSrc}`}
           src={displayedSrc} 
           alt="Live Camera Stream"
           className="w-full h-full object-contain"
+          onLoad={() => setLoading(false)}
           onError={() => {
             // Fallback to snapshot preloader if MJPEG stream drops
             setUseMjpeg(false);
@@ -1364,8 +1367,8 @@ export default function App() {
                             <p className="font-mono text-[10px] text-white/40 mt-2 uppercase tracking-widest">Transmissão Local Ativa</p>
                           </div>
                         ) : status.current_source_type === 'camera' ? (
-                          <div className="w-full h-full relative">
-                            <CameraPreview camId={status.current_source_id as number} className="w-full h-full object-contain" isLive={true} />
+                          <div className="w-full h-full relative" key={`live-container-${status.current_source_id}`}>
+                            <CameraPreview key={`live-cam-preview-${status.current_source_id}`} camId={status.current_source_id as number} className="w-full h-full object-contain" isLive={true} />
                             <div className="absolute inset-0 bg-black/20 pointer-events-none" />
                             <div className="absolute bottom-4 left-4 flex items-center gap-2">
                               <Activity className="w-4 h-4 text-emerald-500 animate-pulse" />
@@ -1445,7 +1448,7 @@ export default function App() {
                   {cameras.map(cam => (
                     <div key={cam.id} className={`bg-[#151619] rounded-2xl border transition-all overflow-hidden group ${status?.current_source_id === cam.id && status.current_source_type === 'camera' ? 'border-emerald-500 shadow-lg shadow-emerald-500/10' : 'border-white/10 hover:border-white/20'}`}>
                       <div className="aspect-video bg-black/40 relative">
-                        <CameraPreview camId={cam.id} className="w-full h-full opacity-40 group-hover:opacity-60 transition-opacity" />
+                        <CameraPreview key={`grid-cam-${cam.id}`} camId={cam.id} className="w-full h-full opacity-80 group-hover:opacity-100 transition-opacity" isLive={true} />
                         <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/60">
                           <button 
                             onClick={() => switchStream('camera', cam.id)}
