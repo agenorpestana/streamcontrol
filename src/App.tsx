@@ -1632,7 +1632,7 @@ export default function App() {
               className="max-w-4xl"
             >
               <div className="bg-[#151619] rounded-3xl border border-white/10 p-8 mb-8">
-                <h3 className="text-xl font-bold mb-6">Adicionar Nova Câmera</h3>
+                <h3 className="text-xl font-bold mb-6">Adicionar Nova Câmera (RTSP ou RTMP)</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                   <div>
                     <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">Nome da Câmera</label>
@@ -1645,17 +1645,20 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">URL RTSP</label>
+                    <label className="block text-xs font-mono uppercase tracking-wider text-white/40 mb-2">URL RTSP ou RTMP</label>
                     <input 
                       type="text" 
                       value={newCam.rtsp_url}
                       onChange={(e) => setNewCam({ ...newCam, rtsp_url: e.target.value })}
                       className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:outline-none focus:border-emerald-500 transition-colors"
-                      placeholder="rtsp://usuario:senha@ip:porta/stream"
+                      placeholder="rtsp://... ou rtmp://..."
                     />
-                    <div className="mt-2 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                    <div className="mt-2 bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 space-y-1">
                       <p className="text-[10px] text-amber-200 leading-relaxed">
-                        <span className="font-bold">AVISO:</span> Para câmeras locais, a URL deve ser acessível pela internet (IP Público ou Redirecionamento de Portas). Se a câmera estiver em sua rede local privada, o servidor na nuvem não conseguirá conectar.
+                        <span className="font-bold">PROTOCOLOS SUPORTADOS:</span> Aceita URLs <span className="font-mono font-bold text-emerald-400">rtsp://</span> e <span className="font-mono font-bold text-amber-400">rtmp://</span>.
+                      </p>
+                      <p className="text-[10px] text-amber-200/80 leading-relaxed">
+                        Para câmeras na rede local, a URL deve possuir IP público ou redirecionamento de porta para o servidor da nuvem conseguir conectar.
                       </p>
                     </div>
                   </div>
@@ -1670,25 +1673,33 @@ export default function App() {
               </div>
 
               <div className="space-y-4">
-                {cameras.map(cam => (
-                  <div key={cam.id} className="bg-[#151619] rounded-2xl border border-white/10 p-6 flex items-center justify-between group">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 bg-black/40 rounded-xl flex items-center justify-center text-white/20">
-                        <Camera size={24} />
+                {cameras.map(cam => {
+                  const isRtmp = cam.rtsp_url && (cam.rtsp_url.startsWith('rtmp://') || cam.rtsp_url.startsWith('rtmps://'));
+                  return (
+                    <div key={cam.id} className="bg-[#151619] rounded-2xl border border-white/10 p-6 flex items-center justify-between group">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 bg-black/40 rounded-xl flex items-center justify-center text-white/20">
+                          <Camera size={24} />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h4 className="font-bold text-lg">{cam.name}</h4>
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${isRtmp ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'}`}>
+                              {isRtmp ? 'RTMP' : 'RTSP'}
+                            </span>
+                          </div>
+                          <p className="text-sm text-white/40 font-mono">{cam.rtsp_url}</p>
+                        </div>
                       </div>
-                      <div>
-                        <h4 className="font-bold text-lg">{cam.name}</h4>
-                        <p className="text-sm text-white/40 font-mono">{cam.rtsp_url}</p>
-                      </div>
+                      <button 
+                        onClick={() => deleteCamera(cam.id)}
+                        className="p-3 text-white/20 hover:text-red-400 hover:bg-red-400/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
+                      >
+                        <Trash2 size={20} />
+                      </button>
                     </div>
-                    <button 
-                      onClick={() => deleteCamera(cam.id)}
-                      className="p-3 text-white/20 hover:text-red-400 hover:bg-red-400/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
-                    >
-                      <Trash2 size={20} />
-                    </button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </motion.div>
           )}

@@ -304,13 +304,28 @@ async function startServer() {
       if (type === "camera") {
         const cam = db.cameras.find((c: any) => c.id === id);
         if (!cam) return;
-        inputArgs = [
-          "-rtsp_transport", "tcp", 
-          "-analyzeduration", "10M", 
-          "-probesize", "10M", 
-          "-i", cam.rtsp_url,
-          "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
-        ];
+
+        // Store last active camera ID for auto-returning after video commercials
+        db.stream_status.last_camera_id = id;
+        saveDb(db);
+
+        const isRtmp = cam.rtsp_url && (cam.rtsp_url.startsWith("rtmp://") || cam.rtsp_url.startsWith("rtmps://"));
+        if (isRtmp) {
+          inputArgs = [
+            "-analyzeduration", "5M", 
+            "-probesize", "5M", 
+            "-i", cam.rtsp_url,
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+          ];
+        } else {
+          inputArgs = [
+            "-rtsp_transport", "tcp", 
+            "-analyzeduration", "10M", 
+            "-probesize", "10M", 
+            "-i", cam.rtsp_url,
+            "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"
+          ];
+        }
         mappingArgs = ["-map", "0:v:0", "-map", "1:a:0"];
       } else if (type === "video") {
         const vid = db.videos.find((v: any) => v.id === id);
@@ -335,7 +350,7 @@ async function startServer() {
         mappingArgs = ["-map", "0:v:0", "-map", "0:a:0?"]; 
       }
 
-      let vfFilters = "fps=25,format=yuv420p";
+      let vfFilters = "fps=30,format=yuv420p";
       
       if ((type === "camera" || type === "video") && (db.stream_status.scoreboard_enabled || db.stream_status.timer_enabled)) {
         writeSportsFiles(db.stream_status);
@@ -391,9 +406,9 @@ async function startServer() {
         "-profile:v", "baseline", // Baseline is lighter than high
         "-level", "3.0",
         "-pix_fmt", "yuv420p",
-        "-r", "25",
-        "-g", "50",
-        "-keyint_min", "50",
+        "-r", "30",
+        "-g", "60",
+        "-keyint_min", "60",
         "-sc_threshold", "0", 
         "-b:v", "2500k",
         "-maxrate", "2500k",
@@ -436,6 +451,28 @@ async function startServer() {
         if (code !== 0 && code !== null) {
           addLog(`[SISTEMA] Dica: Verifique se a sua conexão de upload é estável e se a chave do YouTube não expirou.\n`);
         }
+
+        // Auto-return to last active camera if a non-looping commercial finished naturally
+        const currentDb = getDb();
+        if (type === "video" && !currentDb.stream_status.loop_video && (code === 0 || code === null)) {
+          let targetCamId = currentDb.stream_status.last_camera_id;
+          let targetCam = currentDb.cameras.find((c: any) => c.id === targetCamId);
+          if (!targetCam && currentDb.cameras.length > 0) {
+            targetCam = currentDb.cameras.find((c: any) => c.is_active !== false) || currentDb.cameras[0];
+          }
+
+          if (targetCam) {
+            const autoReturnMsg = `[SERVER] Comercial finalizado. Retornando automaticamente para a câmera '${targetCam.name}' (ID ${targetCam.id})`;
+            console.log(autoReturnMsg);
+            addLog(`${autoReturnMsg}\n`);
+            stopStream(true);
+            setTimeout(() => {
+              startStream("camera", targetCam.id);
+            }, 500);
+            return;
+          }
+        }
+
         stopStream();
       });
 
@@ -600,8 +637,11 @@ async function startServer() {
     // Capture new snapshot
     cache.isFetching = true;
 
+    const isRtmp = cam.rtsp_url && (cam.rtsp_url.startsWith("rtmp://") || cam.rtsp_url.startsWith("rtmps://"));
+    const transportOpts = isRtmp ? [] : ["-rtsp_transport", "tcp"];
+
     const args = [
-      "-rtsp_transport", "tcp",
+      ...transportOpts,
       "-probesize", "32",
       "-analyzeduration", "0",
       "-i", cam.rtsp_url,
